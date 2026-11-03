@@ -228,3 +228,18 @@ spec, ~20 kB, no atom files); `python -m MLM write examples/runs/bto_trilayer_de
 **Tests:** 76 passed in 32 s.
 
 **Next:** S4 polish pass.
+
+## 2026-11-03 — S4 polish pass + wrap-up
+
+**Done**
+- Reviewed the diff vs `origin/dev`: `match.py`, `structure_writer.py`,
+  `angle_between.py`, `moire_lattice_vector_finder.py`, `tool.py` and `notebooks/` are
+  untouched (empty `git diff --stat`). pyflakes clean on all new modules and tests
+  (one unused import removed). README gained a short section on the YAML workflow.
+- The old notebooks were not re-executed (their full sweeps take tens of minutes); they
+  only import unchanged modules.
+
+**Tests:** 76 passed in 34 s. No xfails.
+
+**Still blocked:** push to `origin/claude-edits` (HTTP 403 for the whole session). A git
+bundle of the branch was produced as a fallback (see the final session message).

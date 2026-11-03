@@ -22,7 +22,7 @@ file and `docs/AGENT_LOG.md` first, then resume at the first unticked item.
 - [x] **S1** 4-layer and 5-layer example (carry-forward) + PTO/STO heterostructure example.
 - [x] **S2** benchmark: ~2000 YAML files vs `index.csv` (time, bytes per file).
 - [x] **S3** CLI: `python -m MLM run|find|write`.
-- [ ] **S4** polish pass (diff review vs `dev`, dead code, docstrings with examples,
+- [x] **S4** polish pass (diff review vs `dev`, dead code, docstrings with examples,
       full test run, notes update).
 
 ## Hard rules to keep checking
