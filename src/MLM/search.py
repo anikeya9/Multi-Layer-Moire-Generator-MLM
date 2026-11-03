@@ -25,7 +25,7 @@ from __future__ import annotations
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 import yaml

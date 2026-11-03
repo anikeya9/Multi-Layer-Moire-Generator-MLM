@@ -59,6 +59,15 @@ src/MLM/                      # core package
    
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAAM0lEQVR4nO3OQQmAUBBAwSeILbyYdDP8jAaxgjcRZhLMNjNntQIA4C/uvTqq6+sJAADvPS2NA0FrXqf/AAAAAElFTkSuQmCC)  
 
+**YAML multilayer workflow (branch `claude-edits`)**  
+Every candidate structure — monolayer roots, bilayers, trilayers, … N layers — is stored as a small YAML *recipe* (metadata and parent ids, no atoms) plus one `index.csv` per run; atoms are rebuilt on demand. An N-layer stack is searched as a tournament tree of pairwise `match.py` searches.  
+```
+python -m MLM run examples/bto_trilayer_demo.yaml          # stack spec -> runs/bto_trilayer_demo/{yamls,index.csv}
+python -m MLM find runs/bto_trilayer_demo --n-layers 3     # query the index
+python -m MLM write runs/bto_trilayer_demo <id> --fmt vasp # rebuild atoms -> VASP / LAMMPS
+```
+Walkthrough: `dev/yaml_multilayer_demo.ipynb`. Docs: `docs/IMPLEMENTATION_NOTES.md`, `docs/DESIGN.md`. Tests: `python -m pytest`.  
+
 **Skills demonstrated**  
 Scientific Python (NumPy / SciPy / Polars), JIT compilation (Numba), parallelism (multiprocessing), computational geometry and change-of-basis linear algebra, algorithm design (complexity reduction from N^4 \to N^2), computational materials science (DFT / MD input generation, VASP & LAMMPS I/O via ASE), and technical writing for peer-reviewed publication.  
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANklEQVR4nO3OQQmAABRAsSfYxZo/kC1sYQLPJrCCNxG2BFtmZquOAAD4i3Ot7mr/egIAwGvXA4qzBdC53Vr8AAAAAElFTkSuQmCC)  
