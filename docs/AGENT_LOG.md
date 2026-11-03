@@ -130,3 +130,40 @@ added (true per-layer error of the cell).
 **Tests:** 46 passed in 22 s.
 
 **Next:** M4 — stack spec loader and `write_structure`.
+
+## 2026-11-03 — M4 stack spec + `write_structure`
+
+**Done**
+- `src/MLM/spec.py`: `parse_stack_spec`/`load_stack_spec` (strict key validation,
+  per-round param merging, string round keys accepted), `run_stack_spec(path,
+  base_dir, dry_run)` — one call from spec to YAMLs + index; the spec file is copied
+  verbatim to `<run>/stack_spec.yaml`.
+- `src/MLM/build.py`: `rotations_from_lineage` (walks the lineage; checked against the
+  stored `layer_rotations`), `build_atoms` (replicate → stack 3 Å above previous top →
+  rotate → `select_atoms_fractional` with `dtol = max(layer_residuals)`), and
+  `write_structure(run_dir, id, fmt="vasp"|"lammps", out)` using the existing
+  `structure_writer.write_vasp_ase`/`write_lammps_ase`. Per-layer atom counts are checked
+  against area ratio × atoms per cell (warning if off).
+- Replication patch sized from the cell (`replicas_needed`) instead of the notebooks'
+  `8 * (|A1|+|A2|)/|a|`; same folded result, far fewer atoms.
+- `examples/bto_trilayer_demo.yaml`.
+
+**Reproduction (structures)** — all built through `write_structure`:
+| structure | atoms (new / old) | composition | cell | per-layer in-plane max displacement |
+|---|---|---|---|---|
+| BTO bilayer 22.62° (from `bto_2-layer.vasp`) vs `moire_strs_vasp/bto_22.62.vasp` | 312 / 312 | Ba78 O182 Ti52 both | identical | 6.8e-6, 1.1e-4 Å |
+| STO bilayer 22.62° vs `STO_moire_cubic/sto_cubic_22.62.vasp` | 182 / 182 | O104 Sr52 Ti26 both | identical | 6.6e-6, 1.1e-4 Å |
+| BTO trilayer 22.62°/36.87° vs `bto_22.62_36.86.vasp` | 1365 / 1365 | Ba390 O780 Ti195 both | same lattice, other basis | 3e-14, 2.7e-4, **2.29 Å** |
+
+The trilayer's layer 3 differs on purpose: the old file has layer 3 at
+22.62 + 36.86 = 59.48° (φ applied relative to layer 2, at the 36.86° grid point), while
+`trilayer_structure_creator.ipynb` and the new tree rotate layer 3 by φ relative to
+layer 1 (36.87°). Rebuilding the same cell with the old rotation gives ≤ 0.017 Å on all
+layers. Both are commensurate (layer residual 5.7e-5 Å at 36.87°; 5.5e-3 Å at 59.48°,
+1.3e-4 Å at 59.49°). The z positions differ because the old files used a different
+interlayer offset (10.0 Å / 11.2 Å shifts) than the notebook's "3 Å above the top atom"
+rule that `build_atoms` follows (`interlayer_gap` is a parameter).
+
+**Tests:** 69 passed in 32 s.
+
+**Next:** M5 demo notebook.

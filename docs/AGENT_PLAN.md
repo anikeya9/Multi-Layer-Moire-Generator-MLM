@@ -12,7 +12,7 @@ file and `docs/AGENT_LOG.md` first, then resume at the first unticked item.
 - [x] **M3** pairing planner + `build_stack` (carry-forward, per-round params, filters,
       dry-run) + query helpers (`load_index`/`find`/`get`/`lineage`) + tests +
       trilayer reproduction.
-- [ ] **M4** stack-spec loader (`spec.py`) + `write_structure` (`build.py`, VASP and
+- [x] **M4** stack-spec loader (`spec.py`) + `write_structure` (`build.py`, VASP and
       LAMMPS) + structure reproduction checks.
 - [ ] **M5** executed demo notebook `dev/yaml_multilayer_demo.ipynb`.
 - [ ] **M6** docs: `docs/IMPLEMENTATION_NOTES.md`, `docs/DESIGN.md` update.
