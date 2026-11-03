@@ -1,5 +1,16 @@
+# Runtime dependencies of the MLM package.
+# (`multiprocessing` used to be listed here; it is part of the Python standard
+#  library and cannot be installed with pip, so it was removed.)
 numpy
 pandas
+polars
 numba
-multiprocessing
+tqdm
+icecream
+ase
+matplotlib
+scipy
+pyyaml
 
+# Development / testing
+pytest

@@ -1,9 +1,0 @@
-setup.py
-src/MLM/__init__.py
-src/MLM/angle_between.py
-src/MLM/moire_lattice_vector_finder.py
-src/MLM/structure_writer.py
-src/MLM.egg-info/PKG-INFO
-src/MLM.egg-info/SOURCES.txt
-src/MLM.egg-info/dependency_links.txt
-src/MLM.egg-info/top_level.txt

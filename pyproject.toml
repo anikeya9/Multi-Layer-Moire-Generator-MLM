@@ -1,0 +1,12 @@
+# Minimal build configuration. The package metadata itself lives in setup.py;
+# this file only tells pip which build backend to use, so that
+# `pip install -e .` works with an up-to-date setuptools in an isolated build.
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: long-running reproduction checks (deselect with '-m \"not slow\"')",
+]

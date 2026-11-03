@@ -43,3 +43,8 @@ build/
 
 # OS
 .DS_Store
+
+# Search outputs (YAML recipes + index tables). Regenerate with a stack spec.
+runs/
+# pytest
+.pytest_cache/
