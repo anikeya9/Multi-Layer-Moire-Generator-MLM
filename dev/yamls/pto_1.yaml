@@ -1,0 +1,17 @@
+id: pto_1
+level: 0
+n_layers: 1
+material:
+- pto
+parents: []
+twist: null
+lattice_vectors:
+- - 3.8795519
+  - 0.0
+- - 0.0
+  - 3.8795519
+angle_between_vectors: 90.0
+residual: null
+source_poscar:
+- ../moire_structures/PTO_STO/pto_tetra_monolayer.vasp
+units: angstrom
