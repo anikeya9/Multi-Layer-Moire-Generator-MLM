@@ -246,9 +246,8 @@ class MoireStructure:
         rebuild atoms), so prefer paths relative to the repository root.
 
         >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
-        >>> root.lattice_vectors
-        array([[3.9903790951, 0.          ],
-               [0.          , 3.9903790951]])
+        >>> root.lattice_vectors.tolist()
+        [[3.9903790951, 0.0], [0.0, 3.9903790951]]
         """
         primitive = read_primitive(file_path, search_dirs)
         return cls(

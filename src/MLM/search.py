@@ -69,7 +69,7 @@ class SearchParams:
       lowest-residual one is kept. ``None`` → ``1.5 * degstep``.
 
     >>> SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,))
-    SearchParams(degmin=22.0, degmax=23.0, degstep=0.01, ...)
+    SearchParams(degmin=22.0, degmax=23.0, degstep=0.01, dtol=0.0005, nmin=-10, nmax=10, ...)
     """
 
     degmin: float = 1.0
@@ -104,8 +104,9 @@ class SearchParams:
     def window_for(self, lower: MoireStructure) -> tuple[float, float]:
         """The (degmin, degmax) actually swept when ``lower`` is the lower block.
 
-        >>> SearchParams(degmin=1.0, degmax=60.01, window_relative_to="lower_top_layer").window_for(bilayer_at_22_62)
-        (23.62, 82.63)                                                 # doctest: +SKIP
+        >>> params = SearchParams(degmin=1.0, degmax=60.01, window_relative_to="lower_top_layer")
+        >>> params.window_for(bilayer_at_22_62)   # doctest: +SKIP
+        (23.62, 82.63)
         """
         if self.window_relative_to == "frame":
             return self.degmin, self.degmax
@@ -120,7 +121,7 @@ class SearchParams:
         non-zero at every angle. Useful to compare rounds before running them.
 
         >>> SearchParams(degmin=1, degmax=2, degstep=0.01, nmin=-10, nmax=10).estimated_cost()
-        40000
+        36100
         """
         n_angles = len(np.arange(self.degmin, self.degmax, self.degstep))
         n_side = self.nmax - self.nmin - 1  # range(nmin, nmax) without the 0

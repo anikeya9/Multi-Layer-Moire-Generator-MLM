@@ -211,3 +211,20 @@ spec, ~20 kB, no atom files); `python -m MLM write examples/runs/bto_trilayer_de
 <id>` works from the repo root.
 
 **Tests:** 70 passed in 33 s.
+
+## 2026-11-03 — M6 docs
+
+**Done**
+- `docs/IMPLEMENTATION_NOTES.md`: module map, API with examples, data-flow walkthrough,
+  test + reproduction tables with numbers, failures/limitations, agent-decided items.
+- `docs/DESIGN.md`: §2 no longer calls the search model / entry point undecided; new
+  module table; schema example with the added fields; §5.1 added fields; §6 filename with
+  hash; §7 concrete conventions (frame, twist, residual, dedupe, paths, stacking, index);
+  §8 decisions #14–#31 marked agent-decided; §10 new open points.
+- `tests/test_docstrings.py` runs the docstring examples of the new modules (3 examples
+  were wrong and are fixed).
+- Measured the PyYAML C loader for the notes: 6.6× faster than `safe_load` (not used).
+
+**Tests:** 76 passed in 32 s.
+
+**Next:** S4 polish pass.
