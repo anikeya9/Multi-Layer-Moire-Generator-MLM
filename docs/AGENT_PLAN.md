@@ -8,7 +8,7 @@ file and `docs/AGENT_LOG.md` first, then resume at the first unticked item.
 - [x] **M0 Setup** — branch, install, fix `requirements.txt`/`setup.py`, read code +
       notebooks, this plan, baseline `run_and_filter` timings.
 - [x] **M1** `MoireStructure` record (`structure.py`) + level-0 YAML + tests.
-- [ ] **M2** `search_pair` + bilayer YAMLs + index table + tests + bilayer reproduction.
+- [x] **M2** `search_pair` + bilayer YAMLs + index table + tests + bilayer reproduction.
 - [ ] **M3** pairing planner + `build_stack` (carry-forward, per-round params, filters,
       dry-run) + query helpers (`load_index`/`find`/`get`/`lineage`) + tests +
       trilayer reproduction.

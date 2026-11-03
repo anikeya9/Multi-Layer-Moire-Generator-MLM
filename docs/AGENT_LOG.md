@@ -75,3 +75,35 @@ connector also gets 403 on branch creation. Commits are kept locally on
 `claude-edits`; push is retried at every milestone.
 
 **Next:** M2 — `search_pair`, bilayer YAMLs, index.
+
+## 2026-11-03 — M2 `search_pair`, bilayer YAMLs, index
+
+**Done**
+- `src/MLM/search.py`: `SearchParams`, `Filters`, `CellMatch`, `cell_from_pair`,
+  `deduplicate` (HNF-based), `layer_residuals`, `record_from_cell`, `find_candidates`
+  (all cells, no residual filter) and `search_pair` (= `find_candidates` + `Filters`).
+  `match.py` is called unchanged via `run_and_filter`.
+- `src/MLM/index.py`: `RunStore` (writes YAMLs + index rows), `write_index`,
+  `rebuild_index`, `load_index`, `find`, `get`, `lineage` (`LineageNode` tree).
+
+**Reproduction (bilayer)**
+- BTO, 1–45°, ±10, goodangle 90°: raw `run_and_filter` returns 490 pairs; after
+  de-duplication **19 cells, whose twists are exactly the 19 `TBLBTO_<angle>_2.dat`
+  files below 45°** (6.73 … 43.60). 7.2 s.
+- BTO 22.62° vs `bto_bilayer_candidates.csv`: same twist (22.62), same lattice (HNF
+  equal), residual 3.391e-5 Å vs 3.391e-5 Å. The chosen basis
+  `[[-11.971, 7.981], [-7.981, -11.971]]` is identical to the cell of
+  `moire_strs_vasp/bto_22.62.vasp`.
+- Graphene vs `graphene_bilayer_candidates.csv` (goodangle 60°): same lattice; the new
+  best grid angle is 21.79° with 3.66e-4 Å (old O(N⁴) finder on a 0.05° grid: 21.80°,
+  1.51e-3 Å).
+
+**Tests:** 27 passed in ~16 s (`test_structure`, `test_search_pair`, `test_index`,
+`test_reproduction`).
+
+**Decisions (agent-decided):** de-duplication of equivalent matches (same lattice via
+HNF / supercells / neighbouring grid angles) on by default (`dedupe=True`); residual of
+a cell = max(delvec of both vectors); cells made right-handed; `layer_residuals`
+added (true per-layer error of the cell).
+
+**Next:** M3 — planner + `build_stack` + trilayer reproduction.
