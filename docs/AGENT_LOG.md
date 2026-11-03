@@ -46,3 +46,32 @@ use 1° windows.
 **Tests:** none yet (no test suite existed).
 
 **Next:** M1 — `MoireStructure`.
+
+## 2026-11-03 — M1 `MoireStructure`
+
+**Done**
+- `src/MLM/structure.py` rewritten from the skeleton: a `@dataclass` with
+  `from_poscar`, `from_dict`, `from_yaml`, `to_dict`, `to_yaml`, `content_hash`,
+  `make_id`, and derived properties `angle_between_vectors` (reuses
+  `MLM.angle_between.angle_between`, which already clips the cosine and returns a float),
+  `cell_area`, `worst_layer_residual`.
+- POSCAR reading reuses `moire_lattice_vector_finder.read_vasp` (wrapped in an
+  `lru_cache`d `read_primitive`) — no new parser.
+- Added fields (uniform at all levels): `twist_sequence`, `layer_rotations`,
+  `layer_residuals`, `coefficients` (documented in DESIGN.md §5.1).
+- `resolve_path()` resolves stored relative POSCAR paths (cwd, then given dirs).
+
+**Tests:** `tests/test_structure.py` — 10 passed (round trip incl. nulls and NumPy
+scalars, schema uniformity, id format and uniqueness, validation).
+
+**Decisions (agent-decided, logged in DESIGN.md §8):** store `twist_sequence` so the
+id can be generated from a record alone (no filename parsing); hash = sha1 of the JSON
+of all fields except `id`; partial repeats in heterostructure labels are not collapsed
+(`pto_sto_sto`).
+
+**Push status:** `git push` is refused with HTTP 403 ("Claude doesn't have GitHub access
+to anikeya9/Multi-Layer-Moire-Generator-MLM for your organization"), and the GitHub API
+connector also gets 403 on branch creation. Commits are kept locally on
+`claude-edits`; push is retried at every milestone.
+
+**Next:** M2 — `search_pair`, bilayer YAMLs, index.
