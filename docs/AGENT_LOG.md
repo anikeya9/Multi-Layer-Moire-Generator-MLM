@@ -167,3 +167,18 @@ rule that `build_atoms` follows (`interlayer_gap` is a parameter).
 **Tests:** 69 passed in 32 s.
 
 **Next:** M5 demo notebook.
+
+## 2026-11-03 — M5 demo notebook
+
+**Done**
+- `dev/yaml_multilayer_demo.ipynb`, executed with outputs saved (nbconvert):
+  spec → dry run → `run_stack_spec` → `index.csv` → `find` → `get` → recipe file →
+  `lineage` → `write_structure` (VASP + LAMMPS) → atom-count check → top-view plot.
+  Runs in ~10 s (windows 20–24° and 35–38°): 1 bilayer, 3 trilayer candidates
+  (35.30°, 36.04°, 36.87°), 2 pass `max_residual = 1e-3`.
+- `dev/make_yaml_multilayer_demo.py` regenerates the notebook (cells as code, so the
+  notebook can be rebuilt after API changes).
+
+**Tests:** 69 passed (unchanged).
+
+**Next:** M6 docs.

@@ -14,7 +14,7 @@ file and `docs/AGENT_LOG.md` first, then resume at the first unticked item.
       trilayer reproduction.
 - [x] **M4** stack-spec loader (`spec.py`) + `write_structure` (`build.py`, VASP and
       LAMMPS) + structure reproduction checks.
-- [ ] **M5** executed demo notebook `dev/yaml_multilayer_demo.ipynb`.
+- [x] **M5** executed demo notebook `dev/yaml_multilayer_demo.ipynb`.
 - [ ] **M6** docs: `docs/IMPLEMENTATION_NOTES.md`, `docs/DESIGN.md` update.
 
 ## Stretch goals (task §7, in order)
