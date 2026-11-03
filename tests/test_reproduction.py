@@ -82,3 +82,46 @@ def test_graphene_bilayer_csv_vectors():
     assert same_lattice(bilayer.lattice_vectors, old_cell, root.lattice_vectors)
     # Old finder: best at 21.80 with vec_del 1.5e-3 Å; new path's grid point 21.79 is closer.
     assert bilayer.residual <= best["vec_del"]
+
+
+def test_bto_trilayer_csv_through_tree(tmp_path):
+    """bilayer 22.62° + layer 3 vs ``bto_trilayer_candidates_22.62.csv`` (best row: 36.87°)."""
+    from MLM.search import Filters, SearchSchedule, build_stack
+
+    reference = pd.read_csv("moire_structures/bto/bto_trilayer_candidates_22.62.csv")
+    best = reference.loc[reference["vec_del"].idxmin()]
+    root = MoireStructure.from_poscar(BTO, "bto")
+    schedule = SearchSchedule(
+        SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,)),
+        {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}},
+    )
+    result = build_stack([root] * 3, schedule, Filters(max_residual=1e-3), run_dir=tmp_path, log=None)
+    (trilayer,) = result.final
+    assert trilayer.twist == pytest.approx(best["degree"], abs=1e-6)  # 36.87
+    assert trilayer.residual == pytest.approx(best["vec_del"], rel=1e-6)  # 5.747e-5 Å
+    old_cell = np.array([parse_vector(best["A1"]), parse_vector(best["A2"])])
+    assert same_lattice(trilayer.lattice_vectors, old_cell, root.lattice_vectors)
+
+
+def test_graphene_trilayer_csv_through_tree(tmp_path):
+    """graphene bilayer 21.79° + layer 3 vs ``graphene_trilayer_candidates_21.80.csv``.
+
+    The old CSV has layer 3 at 21.75/21.80° (i.e. aligned with layer 2) and a cell of
+    3x the bilayer moiré cell. ``match.scan`` skips coefficients with a zero component,
+    so the bilayer cell itself (n = (1, 0), (0, 1)) can never be found; the smallest cell
+    it can report is the same 3x cell.
+    """
+    from MLM.search import Filters, SearchSchedule, build_stack
+
+    reference = pd.read_csv("moire_structures/graphene/graphene_trilayer_candidates_21.80.csv")
+    best = reference.loc[reference["vec_del"].idxmin()]
+    root = MoireStructure.from_poscar(GRAPHENE, "graphene")
+    schedule = SearchSchedule(
+        SearchParams(degmin=21.5, degmax=22.0, nmin=-10, nmax=10, goodangles=(60.0,)),
+        {2: {"degmin": 21.7, "degmax": 21.9, "nmin": -40, "nmax": 40}},
+    )
+    result = build_stack([root] * 3, schedule, Filters(max_residual=1e-2), run_dir=tmp_path, log=None)
+    old_cell = np.array([parse_vector(best["A1"]), parse_vector(best["A2"])])
+    matches = [t for t in result.final if same_lattice(t.lattice_vectors, old_cell, root.lattice_vectors)]
+    assert matches, [t.twist for t in result.final]
+    assert min(abs(t.twist - 21.79) for t in matches) < 0.011

@@ -107,3 +107,26 @@ a cell = max(delvec of both vectors); cells made right-handed; `layer_residuals`
 added (true per-layer error of the cell).
 
 **Next:** M3 — planner + `build_stack` + trilayer reproduction.
+
+## 2026-11-03 — M3 planner, `build_stack`, queries, trilayer reproduction
+
+**Done**
+- `search.py`: `Step`, `plan_rounds` (pure), `format_plan`, `SearchSchedule`
+  (`default` + per-round overrides, `notebook_defaults()`), `build_stack` (tree driver:
+  carry-forward, per-round params, filters, `dry_run`, unimplemented
+  `max_candidates` hook), `StepReport`/`StackResult` (counts and timings per step).
+- Every candidate (rejected ones too) is written to `yamls/` and `index.csv`; the index is
+  rewritten after every step so an interrupted run keeps its progress.
+
+**Reproduction (trilayer)**
+- BTO: bilayer 22.62° + layer 3, round 2 window 36.5–37.5°, ±40 → one cell at
+  **36.87°, residual 5.7472e-5 Å; old CSV best row: 36.87°, 5.7472e-5 Å**, same lattice
+  (HNF), area 1035.0 Å² = 65 primitive cells. `max_layer_residual` = 7.58e-5 Å (the
+  cell's true error w.r.t. layer 2, larger than the max-rule `cumulative_residual`).
+- Graphene: bilayer 21.79° + layer 3 at 21.79° (aligned with layer 2), same lattice as
+  `graphene_trilayer_candidates_21.80.csv` (|A| = 11.307 Å, 3× the bilayer cell),
+  residual 6.3e-4 Å (old: 2.6e-3 Å at the 0.05° grid point 21.80°).
+
+**Tests:** 46 passed in 22 s.
+
+**Next:** M4 — stack spec loader and `write_structure`.
