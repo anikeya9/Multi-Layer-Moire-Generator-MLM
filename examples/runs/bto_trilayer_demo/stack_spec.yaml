@@ -1,0 +1,21 @@
+# Stack spec: BTO homo-trilayer, the case of notebooks/trilayer_candidate_finder.ipynb.
+# Run from the repository root:
+#     python -c "from MLM.spec import run_stack_spec; print(run_stack_spec('examples/bto_trilayer_demo.yaml').summary())"
+#
+# The angle windows are narrow (a few degrees) so the demo finishes in seconds.
+# For a full landscape scan use degmin 1, degmax 45 in round 1 and
+# `window_relative_to: lower_top_layer` with degmin 1, degmax 60.01 in round 2
+# (the notebook settings) — that takes ~3 minutes per bilayer candidate.
+name: bto_trilayer_demo
+output_dir: runs/bto_trilayer_demo
+layers:
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+search:
+  default: {degmin: 20.0, degmax: 24.0, degstep: 0.01, dtol: 5.0e-4, nmin: -10, nmax: 10, goodangles: [90.0]}
+  rounds:
+    2: {degmin: 35.0, degmax: 38.0, nmin: -40, nmax: 40}
+filters:
+  max_residual: 1.0e-3
+  max_cumulative_residual: null

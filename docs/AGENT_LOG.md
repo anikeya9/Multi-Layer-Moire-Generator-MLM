@@ -182,3 +182,32 @@ rule that `build_atoms` follows (`interlayer_gap` is a parameter).
 **Tests:** 69 passed (unchanged).
 
 **Next:** M6 docs.
+
+## 2026-11-03 — S1–S3 (done before finishing M6, because the docs reference them)
+
+**S3 CLI** — `src/MLM/cli.py` + `__main__.py`: `python -m MLM run|find|show|write`
+(thin argparse wrappers). `tests/test_cli.py`.
+
+**S1 examples** — `examples/bto_4layer_demo.yaml`, `bto_5layer_demo.yaml`,
+`pto_sto_pto_demo.yaml`, executed in `dev/yaml_multilayer_stretch.ipynb`:
+- 4 layers: (L1+L2),(L3+L4) → identical bilayer recipe stored once; round 2 (30–40°,
+  ±10) → 4 cells, 2 pass; best 36.87°, rotations [0, 22.62, 36.87, 59.49].
+- 5 layers: L5 carried through two rounds; round 3 (20–25°, ±40, 12.9 s) → 5 cells,
+  2 pass `max_layer_residual ≤ 1e-3`; rebuilt 5-layer VASP with 910 atoms/layer exactly.
+- PTO/STO bilayer (1–45°, ±10, dtol 9e-3) reproduces `PTO_STO/tblstopto.pkl` exactly:
+  the same 6 twists (7.13, 17.74, 28.99, 29.74, 35.02, 40.36) and residuals
+  (0.0238, 0.0288, 0.0083, 0.0238, 0.0081, 0.0288 Å).
+- PTO/STO/PTO trilayer: 21 candidates, 5 pass. **Finding:** the per-step residual of the
+  trilayer step is tiny (1e-4 Å) but the true error vs the STO layer is 0.02–0.3 Å
+  (median 5× the `cumulative_residual`). Added `Filters.max_layer_residual`
+  (agent-decided) so runs can filter on the true error.
+
+**S2 benchmark** — `dev/benchmark_yaml_vs_index.py` (2000 synthetic trilayer recipes):
+YAML 783 B/file (1.57 MB total), index 286 B/row (0.57 MB); filtering by reading all
+YAMLs 4.95 s (2.5 ms/file) vs `load_index` 15 ms (~325×) vs `find` 26 ms.
+
+Also committed a tiny example run, `examples/runs/bto_trilayer_demo/` (YAMLs + index +
+spec, ~20 kB, no atom files); `python -m MLM write examples/runs/bto_trilayer_demo
+<id>` works from the repo root.
+
+**Tests:** 70 passed in 33 s.

@@ -45,6 +45,6 @@ build/
 .DS_Store
 
 # Search outputs (YAML recipes + index tables). Regenerate with a stack spec.
-runs/
+/runs/
 # pytest
 .pytest_cache/

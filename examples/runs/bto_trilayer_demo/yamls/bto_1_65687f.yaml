@@ -1,0 +1,18 @@
+id: bto_1_65687f
+level: 0
+n_layers: 1
+material: [bto]
+parents: []
+twist: null
+lattice_vectors:
+- [3.9903790951, 0.0]
+- [0.0, 3.9903790951]
+angle_between_vectors: 90.0
+residual: null
+cumulative_residual: null
+source_poscar: [moire_structures/bto/bto_1-layer.vasp]
+units: angstrom
+twist_sequence: []
+layer_rotations: [0.0]
+layer_residuals: null
+coefficients: null

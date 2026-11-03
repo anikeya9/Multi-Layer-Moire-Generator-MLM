@@ -71,6 +71,8 @@ def test_filters_drop_but_do_not_change_candidates(bto_bilayers):
     assert Filters(max_residual=1e-6).reasons_rejected(bilayer)
     assert Filters().passes(bilayer)
     assert Filters(max_residual=0.0).passes(root)  # roots always pass
+    assert not Filters(max_layer_residual=1e-5).passes(bilayer)
+    assert Filters(max_layer_residual=1e-4, max_length_mismatch=0.1).passes(bilayer)
 
 
 def test_window_relative_to_lower_top_layer(bto_bilayers):

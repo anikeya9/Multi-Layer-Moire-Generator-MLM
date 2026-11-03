@@ -1,0 +1,15 @@
+# BTO homo-4-layer: round 1 makes (L1+L2) and (L3+L4) bilayers, round 2 combines the two
+# bilayer blocks (block-rigid: L3 and L4 rotate together). Narrow windows -> seconds.
+name: bto_4layer_demo
+output_dir: runs/bto_4layer_demo
+layers:
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+  - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+search:
+  default: {degmin: 22.0, degmax: 23.0, degstep: 0.01, dtol: 5.0e-4, nmin: -10, nmax: 10, goodangles: [90.0]}
+  rounds:
+    2: {degmin: 30.0, degmax: 40.0}
+filters:
+  max_residual: 1.0e-3

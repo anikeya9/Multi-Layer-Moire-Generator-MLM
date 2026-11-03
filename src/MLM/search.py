@@ -136,6 +136,9 @@ class Filters:
 
     - ``max_residual`` — max ``residual`` (Å) of the combination step itself.
     - ``max_cumulative_residual`` — max ``cumulative_residual`` (Å).
+    - ``max_layer_residual`` — max of ``layer_residuals`` (Å): the cell's true error
+      against every layer. Unlike ``cumulative_residual`` it sees errors that grow when
+      an imperfect cell is multiplied up in later rounds (important for heterostructures).
     - ``max_length_mismatch`` — max | |a1| − |a2| | (Å); the notebooks used 0.1 to keep
       cells with equal-length vectors. ``None`` disables it.
 
@@ -145,6 +148,7 @@ class Filters:
 
     max_residual: Optional[float] = None
     max_cumulative_residual: Optional[float] = None
+    max_layer_residual: Optional[float] = None
     max_length_mismatch: Optional[float] = None
 
     def passes(self, record: MoireStructure) -> bool:
@@ -165,6 +169,9 @@ class Filters:
             reasons.append(
                 f"cumulative_residual {record.cumulative_residual:.3g} > {self.max_cumulative_residual:.3g}"
             )
+        worst = record.worst_layer_residual
+        if self.max_layer_residual is not None and worst is not None and worst > self.max_layer_residual:
+            reasons.append(f"max layer residual {worst:.3g} > {self.max_layer_residual:.3g}")
         if self.max_length_mismatch is not None:
             a1, a2 = record.lattice_vectors
             mismatch = abs(np.linalg.norm(a1) - np.linalg.norm(a2))
