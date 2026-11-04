@@ -206,3 +206,13 @@ def test_spec_layer_strain_and_mode():
         parse_stack_spec({"name": "s", "layers": [{"poscar": PTO, "material": "pto", "strain": -1}]})
     with pytest.raises(ValueError):
         SearchParams(strain_mode="shear")
+
+
+def test_cells_that_strain_cannot_close_are_dropped(pto, sto):
+    """At 45° a 3:2 PTO rectangle meets a 4:3 STO rectangle: isotropic strain cannot fix
+    the aspect ratio (best fit leaves 0.88 Å), so it is not a strained match."""
+    params = SearchParams(degmin=44.5, degmax=45.0, degstep=0.1, nmin=-10, nmax=10)
+    assert find_candidates(pto, sto, params, strain_limits=(0.0, 1.0)) == []
+    loose = SearchParams(degmin=44.5, degmax=45.0, degstep=0.1, nmin=-10, nmax=10, strain_residual_tol=1.0)
+    kept = find_candidates(pto, sto, loose, strain_limits=(0.0, 1.0))
+    assert kept and min(c.residual for c in kept) > 0.5

@@ -216,6 +216,7 @@ These were added uniformly at every level (agent-decided — needs review, §8 #
 | `layer_rotations` | `[0.0]` | `lower.layer_rotations + [lower.layer_rotations[-1] + twist + r for r in upper.layer_rotations]` | Absolute orientation of every layer, needed to rebuild atoms; also the physically readable angles. `build.write_structure` re-derives it from the lineage and refuses to build if they disagree. |
 | `layer_residuals` | `null` | per layer: max over a1, a2 of the distance from the vector to the nearest point of that layer's rotated primitive lattice (Å) | `cumulative_residual` (max over steps) can **under**-estimate the real error, because a later round's cell is an integer combination of an earlier cell and the error grows with the coefficients. This is the direct measurement. Used as the fold tolerance when rebuilding atoms. |
 | `coefficients` | `null` | `{lower: [[n1,n2],[n1',n2']], upper: [[m1,m2],[m1',m2']]}` | The integer solution behind the cell (from `match.scan`): lets anyone check commensurability by hand. |
+| `layer_strains` | `[[[0,0],[0,0]]]` | per layer, the 2×2 strain tensor **in percent**, in the layer's own (POSCAR) frame; zeros = rigid | Heterostrain (§11, branch `with-straining`). Needed to rebuild strained layers. Left out of the id hash when every entry is zero, so unstrained recipes keep their ids. |
 
 `angle_between_vectors` is stored for readability but is derived: on load it is
 recomputed from `lattice_vectors`.
@@ -352,6 +353,7 @@ delvecs, #14–#17 all four added fields kept, #19 label rule kept, #25–#31 ke
 | 29 | Dry run | exact search counts only where known (round 1); later rounds report `?` plus the per-search cost estimate | counts depend on the previous round's results; no guessing. |
 | 30 | `max_candidates` | raises `NotImplementedError` | clear hook for a future top-K cap (decision 10). |
 | 31 | Index / table library | pandas | the notebooks use pandas; `match.py`'s polars output is converted internally. |
+| 33–44 | Heterostrain | see §11 | branch `with-straining` |
 | 32 | Twist reference | **measured from the layer directly below** (lower block's top layer) — owner decision 2026-11-04 | matches how a stack is described layer by layer; reproduces `bto_22.62_36.86.vasp` (layer 3 at 22.62 + 36.86°). Initially the agent used "relative to the lower block's bottom layer" (the notebooks' absolute `Phi`). |
 
 ---
@@ -448,9 +450,8 @@ thin wrapper read into that API — the reproducible record of a job (decision 1
 
 ## 10. Open questions / future work
 
-- **Heterostrain engineering (future):** allow slight stretch/compress of a layer to
-  drive residual toward zero (esp. for heterostructures). This modifies the *matching
-  criterion*, orthogonal to the tree; the `residual` field is the natural hook.
+- **Heterostrain:** implemented on branch `with-straining` (§11). Open: elastic
+  constants (stiffness-weighted sharing), Poisson relaxation of the layer thickness.
 - **Per-round search params:** whether deeper rounds use coarser/finer sweeps than
   round 1 is still to be tuned empirically (decision deferred until we see what works).
 - **Top-K beam cap:** intentionally omitted now (decision 10); may be needed for large
@@ -469,3 +470,51 @@ thin wrapper read into that API — the reproducible record of a job (decision 1
 - **Schema evolution:** filename scheme and possibly additional metadata fields may
   change as the workflow matures; the authoritative `id` lives in the file to insulate
   against renames.
+
+---
+
+## 11. Heterostrain (branch `with-straining`)
+
+**Goal.** Two lattices that are almost commensurate (e.g. PTO a = 3.880 Å on STO
+a = 3.913 Å, 0.85 % mismatch) only give moiré cells with a residual. Straining the layers
+slightly makes a near-coincidence *exactly* commensurate.
+
+**Method (owner decision: exact solve, not a strain grid).** The ordinary search runs with a
+widened tolerance and returns near-coincidences `A n ≈ R(θ) B m`. For each one,
+`MLM.strain.fit_strain` solves
+
+    (I + ε_A) A N = R(θ + δ) (I + ε_B) B M        (both cell vectors)
+
+for the strain tensors ε_A, ε_B and a twist correction δ (least squares; exact whenever
+the strain mode has enough freedom). There is no strain step: every accepted cell has
+residual ≈ 1e-11 Å.
+
+**Inputs.** Per layer, a strain limit in **percent** (`strain:` in the stack spec,
+`strain_limits=[...]` in `build_stack`, third entry of `LAYERS` in the explorer notebook);
+0 = rigid. Per search: `strain_mode` and `strain_residual_tol` in `SearchParams`.
+
+### Conventions and decisions (#33–#44; owner choices marked *owner*)
+
+| # | Item | Choice | Convention / reason |
+|---|---|---|---|
+| 33 | Strain definition | `a' = (I + ε) a`, ε symmetric 2×2, small-strain (Biot) convention; rigid rotations are not strain and go into the twist correction δ | standard continuum-mechanics convention |
+| 34 | Frame of ε | each layer's own (POSCAR, unrotated) frame; stored in `layer_strains` in percent | the frame in which the layer is defined; what the rebuild needs |
+| 35 | Strain modes *(owner: all three, user selects)* | `isotropic` ε = e·I (equal in-plane strain, called "biaxial strain" in thin-film papers; keeps angles); `axial` ε = diag(e_xx, e_yy) along x, y of the POSCAR frame (= along a1, a2 for square/rectangular cells); `full` any symmetric ε incl. shear | the three usual levels of freedom; default `isotropic` |
+| 36 | Strain magnitude / limit | largest absolute principal strain (eigenvalue of ε) ≤ the layer's limit; symmetric ± | standard measure; independent of axes |
+| 37 | Sharing between the two layers | in proportion to the layers' limits (minimise Σ‖ε‖²/limit): limit 0 = rigid substrate; equal limits = average lattice | generalises the two common conventions; it is also the split most likely to respect both limits (each layer uses the same fraction of its limit) |
+| 38 | Strain grid step *t* | dropped *(owner: exact solve)* | with an exact solve a step is not needed |
+| 39 | Which layers *(owner)* | only single layers, in the first search they take part in; blocks from earlier rounds stay rigid | keeps already-exact inner interfaces exact |
+| 40 | Scan tolerance | widened automatically to `min(0.45, max(dtol, (lim_A + lim_B + Δθ/2)·|m|max))` | a match needing strain ε has fractional error ≈ ε·|m| in `match.scan`; a coarse `degstep` (0.1°) is enough because δ refines the twist |
+| 41 | What is dropped (not saved) | cells needing more than a layer's limit, cells whose exact twist leaves `[degmin, degmax)`, cells the allowed strain cannot close (residual > `strain_residual_tol`, default 1e-6 Å) | these are not commensurate under the job's rules, so they are not candidates (like a good-angle mismatch) |
+| 42 | Duplicates *(owner: smallest strain)* | one cell per (lower lattice, upper lattice), smallest strain; supercells at the same exact twist removed unless `keep_supercells` | same rules as without strain |
+| 43 | Atoms | in-plane only: x, y of every atom move with the cell (fractional coordinates kept); z unchanged (no Poisson effect) *(owner)* | the usual first approximation; relax with DFT/MD afterwards |
+| 44 | Ids and old files | `layer_strains` is hashed only if non-zero (unstrained ids unchanged); recipes without the field load as unstrained; an `index.csv` without `max_strain` reads it as 0 | backward compatible with runs from `claude-edits` |
+
+Index column `max_strain` (percent, worst layer) and `find(..., max_strain=...)` /
+`python -m MLM find --max-strain` filter on it.
+
+**Bug fix found on the way.** `structure_writer.select_atoms_fractional` folded a coordinate
+of −1e-17 to exactly 1.0, outside [0, 1), which made SciPy's periodic KDTree fail. Exactly
+commensurate (strained) cells put atoms on the cell boundary, so this showed up now; such
+coordinates are now folded to 0.
+

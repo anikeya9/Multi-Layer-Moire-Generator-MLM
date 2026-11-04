@@ -65,6 +65,9 @@ class SearchParams:
     - ``strain_mode`` — which strain tensors are allowed when a layer has a strain limit
       (see :mod:`MLM.strain`): ``"isotropic"`` (default; ε = e·I), ``"axial"``
       (ε = diag(e_xx, e_yy)) or ``"full"`` (any symmetric ε). Ignored without strain.
+    - ``strain_residual_tol`` — Å; a strained cell is accepted only if straining closes
+      it to within this (the point of straining is a perfect match). Mainly matters for
+      ``isotropic``/``axial``, which cannot fix a mismatch in cell *shape*.
 
     >>> SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,))
     SearchParams(degmin=22.0, degmax=23.0, degstep=0.01, dtol=0.0005, nmin=-10, nmax=10, ...)
@@ -81,6 +84,7 @@ class SearchParams:
     keep_supercells: bool = False
     angle_cluster_tol: Optional[float] = None
     strain_mode: str = "isotropic"
+    strain_residual_tol: float = 1e-6
 
     def __post_init__(self) -> None:
         # Accept lists from YAML but store an (immutable, hashable) tuple.
@@ -490,7 +494,8 @@ def strain_cells(
        layer would exceed its limit — such cells are not commensurate within the
        job's rules, so they are not candidates at all.
        The fit also corrects the twist; a cell whose exact twist falls outside the
-       requested window ``[degmin, degmax)`` is dropped as well.
+       requested window ``[degmin, degmax)`` is dropped as well, and so is a cell that
+       the allowed strain cannot close (residual > ``strain_residual_tol``).
     3. The same structure reached from several runs: keep the smallest strain.
     4. Unless ``keep_supercells``, keep only the smallest cell at each exact twist.
     """
@@ -506,7 +511,8 @@ def strain_cells(
             fit = fit_strain(start.vectors, upper.lattice_vectors, start.upper_coeffs,
                              offset + start.twist, params.strain_mode, *limits)
             twist = start.twist + fit.twist_correction
-            if not fit.within(*limits) or not params.degmin <= twist < params.degmax:
+            closed = fit.residual <= params.strain_residual_tol
+            if not closed or not fit.within(*limits) or not params.degmin <= twist < params.degmax:
                 continue
             strained = replace(start, twist=twist, vectors=fit.cell,
                                residual=fit.residual, lower_strain=fit.lower_strain, upper_strain=fit.upper_strain)

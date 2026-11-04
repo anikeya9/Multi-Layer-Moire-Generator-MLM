@@ -37,7 +37,12 @@ you need them.
 
 **Angle convention.** A twist is the anticlockwise rotation of a layer relative to the
 layer **directly below** it. For three layers with twists 22.62° and 36.87°, the absolute
-orientations are 0°, 22.62° and 22.62 + 36.87 = 59.49°.""")
+orientations are 0°, 22.62° and 22.62 + 36.87 = 59.49°.
+
+**Strain (heterostructures).** Give a layer a strain limit in % and MLM will strain it
+just enough to make near-matches *exactly* commensurate (residual → 0). The strain is
+shared between the two layers of a pair in proportion to their limits, and reported per
+layer as a tensor in the layer's own (POSCAR) frame.""")
 
 code("""import os
 os.environ["TQDM_DISABLE"] = "1"   # hide match.py's progress bars
@@ -98,7 +103,8 @@ md("""## 1. Your stack  ✏️
 Edit this cell, then run all cells.
 
 - `LAYERS`: one entry per layer, **bottom to top**: (POSCAR path relative to the repository
-  root, a short label such as `"bto"`). Repeat an entry for a homo-multilayer.
+  root, a short label such as `"bto"`, and optionally the **maximum strain in %** that
+  layer may take; 0 or left out = rigid). Repeat an entry for a homo-multilayer.
 - `TWIST_RANGES`: one `(min, max)` range in degrees **per interface**, bottom to top.
   Entry *k* is the twist of layer *k+1* relative to layer *k*, so there is one entry fewer
   than layers. Narrow ranges are fast; see the time estimate in step 2.
@@ -106,15 +112,23 @@ Edit this cell, then run all cells.
   square/rectangular cells, `60` or `120` for hexagonal ones. You can list several.
 - `MAX_RESIDUAL`, `MAX_LAYER_RESIDUAL`: how far from perfectly commensurate a cell may be,
   in Å. The first checks each combination step; the second checks the final cell against
-  every layer (safer for heterostructures). `None` switches a check off.""")
+  every layer (safer for heterostructures). `None` switches a check off.
+- `STRAIN_MODE` (only used if a layer has a strain limit):
+  - `"isotropic"`: equal stretch in all in-plane directions; cell angles are kept.
+  - `"axial"`: independent stretches along x and y of the layer's POSCAR frame (along a1
+    and a2 for square/rectangular cells).
+  - `"full"`: any in-plane strain, including shear. Always gives an exact match.
+
+  A layer is strained only in the round where it is first combined. Blocks built in
+  earlier rounds stay rigid, so their inner interfaces stay exact.""")
 
 code("""# ========================== EDIT THIS CELL ==========================
 RUN_NAME = "my_stack"            # results go to runs/<RUN_NAME>/
 
-LAYERS = [                       # bottom -> top: (POSCAR, label)
-    ("moire_structures/bto/bto_1-layer.vasp", "bto"),
-    ("moire_structures/bto/bto_1-layer.vasp", "bto"),
-    ("moire_structures/bto/bto_1-layer.vasp", "bto"),
+LAYERS = [                       # bottom -> top: (POSCAR, label, max strain in %)
+    ("moire_structures/bto/bto_1-layer.vasp", "bto", 0.0),
+    ("moire_structures/bto/bto_1-layer.vasp", "bto", 0.0),
+    ("moire_structures/bto/bto_1-layer.vasp", "bto", 0.0),
 ]
 
 TWIST_RANGES = [                 # degrees, one per interface, bottom -> top
@@ -126,13 +140,23 @@ CELL_ANGLES = [90.0]             # 90 = square/rectangular cell, 60/120 = hexago
 
 MAX_RESIDUAL = 1e-3              # Å, error of each combination step (None = off)
 MAX_LAYER_RESIDUAL = 1e-3        # Å, error of the final cell vs every layer (None = off)
+
+STRAIN_MODE = "isotropic"        # "isotropic", "axial" or "full" (used only with strain limits)
+
+# Example with strain (heterostructure): replace the values above by
+# LAYERS = [
+#     ("moire_structures/PTO_STO/pto_tetra_monolayer.vasp", "pto", 0.0),                    # rigid substrate
+#     ("moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp", "sto", 1.0),  # up to 1 %
+# ]
+# TWIST_RANGES = [(5.0, 10.0)]
 # =====================================================================""")
 
 md("""### Advanced settings
 
 Usually fine as they are.
 
-- `ANGLE_STEP`: grid spacing of the twist sweep.
+- `ANGLE_STEP`: grid spacing of the twist sweep. With strain, `0.1` is usually enough,
+  because the exact twist is solved for afterwards.
 - `MATCH_TOLERANCE`: tolerance on the fractional coordinates when matching lattice points
   (`dtol` in `match.py`). Raise it, e.g. to `9e-3`, for lattice-mismatched
   heterostructures.
@@ -164,31 +188,41 @@ code("""def check_inputs():
         if len(window) != 2 or not window[0] < window[1]:
             problems.append(f"TWIST_RANGES[{k - 1}] (layer {k} -> {k + 1}) must be (min, max) "
                             f"with min < max, got {window}.")
-    for position, (poscar, label) in enumerate(LAYERS, start=1):
+    for position, entry in enumerate(LAYERS, start=1):
+        if len(entry) not in (2, 3):
+            problems.append(f"layer {position}: use (POSCAR, label) or (POSCAR, label, max strain %), got {entry}")
+            continue
+        poscar = entry[0]
         if not (REPO / poscar).exists() and not Path(poscar).exists():
             problems.append(f"layer {position}: file not found: {poscar}")
+        if len(entry) == 3 and not entry[2] >= 0:
+            problems.append(f"layer {position}: the strain limit must be >= 0 (percent), got {entry[2]}")
     if problems:
         raise ValueError("Please fix the input cell:\\n  - " + "\\n  - ".join(problems))
 
 
 check_inputs()
-roots = [MoireStructure.from_poscar(poscar, label, search_dirs=[REPO]) for poscar, label in LAYERS]
+poscars = [entry[0] for entry in LAYERS]
+labels = [entry[1] for entry in LAYERS]
+strain_limits = [float(entry[2]) if len(entry) == 3 else 0.0 for entry in LAYERS]   # percent
+roots = [MoireStructure.from_poscar(poscar, label, search_dirs=[REPO]) for poscar, label in zip(poscars, labels)]
 
 layer_table = []
-for position, ((poscar, label), root) in enumerate(zip(LAYERS, roots), start=1):
+for position, (poscar, label, limit, root) in enumerate(zip(poscars, labels, strain_limits, roots), start=1):
     primitive = read_primitive(poscar, [REPO])
     a, b = root.lattice_vectors
     layer_table.append({"layer": position, "label": label, "POSCAR": poscar,
                         "atoms/cell": len(primitive["coords"]),
                         "|a| (Å)": round(float(np.linalg.norm(a)), 4),
                         "|b| (Å)": round(float(np.linalg.norm(b)), 4),
-                        "γ (deg)": round(root.angle_between_vectors, 2)})
+                        "γ (deg)": round(root.angle_between_vectors, 2),
+                        "max strain (%)": limit})
 pd.DataFrame(layer_table)""")
 
 code("""# Search parameters: defaults, a larger n range from round 2 on, and your twist range per interface.
 default = SearchParams(degmin=TWIST_RANGES[0][0], degmax=TWIST_RANGES[0][1], degstep=ANGLE_STEP,
                        dtol=MATCH_TOLERANCE, nmin=-N_RANGE_FIRST_ROUND, nmax=N_RANGE_FIRST_ROUND,
-                       goodangles=tuple(CELL_ANGLES))
+                       goodangles=tuple(CELL_ANGLES), strain_mode=STRAIN_MODE)
 later_rounds = {r: {"nmin": -N_RANGE_LATER_ROUNDS, "nmax": N_RANGE_LATER_ROUNDS}
                 for r in range(2, len(LAYERS) + 1)}
 per_interface = {k: {"degmin": float(low), "degmax": float(high)}
@@ -201,14 +235,20 @@ for round_number, steps in enumerate(plan_rounds(len(LAYERS)), start=1):
     for step in steps:
         if step.is_carry:
             plan_rows.append({"round": round_number, "combination": str(step), "interface": "—",
-                              "twist range (deg)": "—", "n range": "—", "≈ s per search": "—"})
+                              "twist range (deg)": "—", "n range": "—", "strain limits (%)": "—",
+                              "≈ s per search": "—"})
             continue
         params = schedule.params_for_step(round_number, step)
         k = step.interface
+        # Only single layers can be strained; blocks from earlier rounds stay rigid.
+        lower_limit = strain_limits[step.lower[0]] if step.lower[1] - step.lower[0] == 1 else 0.0
+        upper_limit = strain_limits[step.upper[0]] if step.upper[1] - step.upper[0] == 1 else 0.0
         plan_rows.append({"round": round_number, "combination": str(step),
                           "interface": f"layer {k} → {k + 1}",
                           "twist range (deg)": f"{params.degmin:g} – {params.degmax:g}",
                           "n range": f"±{params.nmax}",
+                          "strain limits (%)": (f"{lower_limit:g} / {upper_limit:g} ({STRAIN_MODE})"
+                                                if lower_limit or upper_limit else "rigid"),
                           "≈ s per search": round(params.estimated_cost() / TESTS_PER_SECOND, 1)})
 pd.DataFrame(plan_rows)""")
 
@@ -229,8 +269,10 @@ if run_dir.exists() and OVERWRITE_EXISTING_RUN:
 
 # The saved stack_spec.yaml uses repository-relative paths, so it can be re-run with
 # `python -m MLM run runs/<RUN_NAME>/stack_spec.yaml` from the repository root.
-spec = job_to_spec_dict(RUN_NAME, roots, schedule, filters, output_dir=f"runs/{RUN_NAME}")
-result = build_stack(roots, schedule, filters, run_dir=run_dir, search_dirs=[REPO], spec=spec, log=print)
+spec = job_to_spec_dict(RUN_NAME, roots, schedule, filters, output_dir=f"runs/{RUN_NAME}",
+                        strain_limits=strain_limits)
+result = build_stack(roots, schedule, filters, run_dir=run_dir, search_dirs=[REPO], spec=spec, log=print,
+                     strain_limits=strain_limits)
 print()
 print(result.summary())""")
 
@@ -241,7 +283,8 @@ The full-stack candidates that passed the limits, smallest cell (fewest atoms) f
 - the twist of every interface;
 - `residual`: the error of the last combination step;
 - `max layer residual`: the error of the cell measured against every layer;
-- the cell size and the number of atoms it will contain.""")
+- the cell size and the number of atoms it will contain;
+- with strain: the largest principal strain of each layer, in %.""")
 
 code("""def candidate_table(records):
     rows = []
@@ -251,9 +294,9 @@ code("""def candidate_table(records):
         for k in range(1, record.n_layers):
             row[f"twist {k}→{k + 1} (deg)"] = round(rotations[k] - rotations[k - 1], 3)
         n_atoms = 0
-        for poscar in record.source_poscar:
+        for poscar, strain in zip(record.source_poscar, record.strain_tensors()):
             primitive = read_primitive(poscar, [REPO])
-            primitive_area = abs(np.linalg.det(primitive["in_plane"]))
+            primitive_area = abs(np.linalg.det(primitive["in_plane"])) * abs(np.linalg.det(np.eye(2) + strain))
             n_atoms += int(round(record.cell_area / primitive_area)) * len(primitive["coords"])
         a1, a2 = record.lattice_vectors
         row.update({"cell angle (deg)": round(record.angle_between_vectors, 2),
@@ -262,6 +305,9 @@ code("""def candidate_table(records):
                     "atoms": n_atoms,
                     "residual (Å)": record.residual,
                     "max layer residual (Å)": record.worst_layer_residual})
+        if any(strain_limits):
+            for k, strain in enumerate(record.strain_tensors(), start=1):
+                row[f"strain L{k} (%)"] = round(100 * float(np.max(np.abs(np.linalg.eigvalsh(strain)))), 4)
         rows.append(row)
     table = pd.DataFrame(rows)
     return table.sort_values(["atoms", "max layer residual (Å)"]).reset_index(drop=True) if rows else table
@@ -295,6 +341,10 @@ else:
     chosen = get(run_dir, chosen_id)
     print("id:", chosen_id)
     print("absolute layer orientations (deg):", np.round(chosen.layer_rotations, 3))
+    if chosen.is_strained:
+        print("strain tensor of each layer (%, in the layer's own POSCAR frame):")
+        for k, tensor in enumerate(chosen.layer_strains, start=1):
+            print(f"  layer {k}: {np.round(tensor, 4).tolist()}")
     print("moiré cell vectors (Å):\\n", chosen.lattice_vectors.round(4))
     print()
     print("lineage (how it was built):")

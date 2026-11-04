@@ -294,3 +294,28 @@ between each pair of layers.
   window per interface (1 cell, 392 atoms), and an empty result (hints, no errors).
 
 **Tests:** 81 passed.
+
+## 2026-11-04 — Heterostrain (branch `with-straining`)
+
+**Request:** strain the layers of a heterostructure (limits d1, d2) to find perfect matches.
+Owner choices: strain mode selectable (isotropic / axial / full); exact strain solve instead
+of a strain grid; per-layer limits, blocks rigid; keep the smallest strain; store
+`layer_strains` and apply it when writing; limits in % per layer. Other choices follow
+standard conventions (DESIGN.md §11, #33–#44).
+
+**Done**
+- `src/MLM/strain.py`: `fit_strain` (least squares, sharing ∝ limits), `strain_tensor`,
+  `strain_magnitude`, `scan_tolerance`.
+- `search.py`: `strain_mode`, `strain_residual_tol`; `find_candidates(..., strain_limits)`;
+  `strain_cells`; `build_stack(..., strain_limits)`; strained `layer_residuals`.
+- `structure.py`: `layer_strains` (percent), `is_strained`, `strain_tensors`, `max_strain`;
+  hash unchanged for unstrained records (root still `bto_1_406932`).
+- `index.py` `max_strain` column + `find(max_strain=)`; `spec.py` per-layer `strain`;
+  CLI `--max-strain`; `build.py` strains atoms before rotating them.
+- `structure_writer.select_atoms_fractional`: fold 1.0 → 0.0 (crashed on exact cells).
+- Explorer notebook: strain column in `LAYERS`, `STRAIN_MODE`, strain in plan/results.
+  Checked with the default (unstrained) input, a PTO/STO bilayer (STO ≤ 1 %) and a
+  PTO/STO/PTO trilayer in `full` mode.
+- `examples/pto_sto_strained_demo.yaml`: 21 exact cells in 2 s.
+
+**Tests:** 109 passed (28 new in `tests/test_strain.py`).

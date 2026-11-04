@@ -1,0 +1,16 @@
+# Heterostrain: PTO (a = 3.880 Å) / STO (a = 3.913 Å) bilayer, 0.85 % lattice mismatch.
+# PTO is the rigid substrate (no `strain` entry = 0); STO may be strained by up to 1 %.
+# Every near-coincidence found in the twist window is strained to an EXACT match
+# (residual ~1e-11 Å); the needed strain is stored per layer in `layer_strains` (percent).
+# Compare with pto_sto_pto_demo.yaml (no strain): residuals there are 0.008–0.03 Å.
+name: pto_sto_strained_demo
+output_dir: runs/pto_sto_strained_demo
+layers:
+  - {poscar: moire_structures/PTO_STO/pto_tetra_monolayer.vasp, material: pto}
+  - {poscar: moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp, material: sto, strain: 1.0}
+search:
+  # A coarse angle grid is enough: the exact twist is solved for together with the strain.
+  default: {degmin: 1.0, degmax: 45.0, degstep: 0.1, nmin: -10, nmax: 10, goodangles: [90.0],
+            strain_mode: isotropic}
+filters:
+  max_residual: 1.0e-6

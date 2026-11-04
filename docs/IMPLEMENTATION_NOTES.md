@@ -25,6 +25,7 @@ src/MLM/
   ─── new ───────────────────────────────────────────────────────────────────────────
   structure.py   MoireStructure record: schema, YAML round trip, id + hash, POSCAR reading
   search.py      search_pair (wraps run_and_filter), de-duplication, planner, build_stack
+  strain.py      heterostrain: exact strain + twist correction for a near-coincidence (§8)
   index.py       run directory store, index.csv, load_index / find / get / lineage
   spec.py        stack-spec loader, run_stack_spec
   build.py       atoms from a recipe's lineage, write_structure (VASP / LAMMPS)
@@ -318,8 +319,7 @@ Full list with reasoning in `docs/DESIGN.md` §8 (#14–#32).
 
 ## 7. Limitations and next steps
 
-Left alone on purpose (still open in DESIGN.md §10): heterostrain to drive residuals to
-zero, a top-K beam cap (`max_candidates` raises `NotImplementedError`), tuning per-round
+Left alone on purpose (still open in DESIGN.md §10): a top-K beam cap (`max_candidates` raises `NotImplementedError`), tuning per-round
 parameters, the final naming scheme.
 
 Suggested next steps:
@@ -328,3 +328,51 @@ Suggested next steps:
 - Allow `n1 = 0` / `n2 = 0` coefficients in a copy of `scan` if the owner wants
   "the lower cell itself" as a candidate in later rounds.
 - Store the interlayer gap / vacuum used for a written structure next to the file.
+
+---
+
+## 8. Heterostrain (branch `with-straining`)
+
+Full conventions and decisions: `docs/DESIGN.md` §11 (#33–#44).
+
+**Use it**
+
+```python
+from MLM.search import SearchParams, SearchSchedule, Filters, build_stack
+pto = MoireStructure.from_poscar("moire_structures/PTO_STO/pto_tetra_monolayer.vasp", "pto")
+sto = MoireStructure.from_poscar("moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp", "sto")
+schedule = SearchSchedule(SearchParams(degmin=1, degmax=45, degstep=0.1, strain_mode="isotropic"))
+result = build_stack([pto, sto], schedule, Filters(max_residual=1e-6), run_dir="runs/strained",
+                     strain_limits=[0.0, 1.0])          # percent per layer: PTO rigid, STO up to 1 %
+find("runs/strained", max_strain=0.3)                  # index column max_strain (percent)
+```
+
+Stack spec: `strain: 1.0` next to a layer, `strain_mode:` in `search.default` (see
+`examples/pto_sto_strained_demo.yaml`). Notebook: third entry of each `LAYERS` tuple and
+`STRAIN_MODE` in `notebooks/moire_stack_explorer.ipynb`.
+
+**How it works.** The normal search runs with an automatically widened tolerance, then
+`strain.fit_strain` solves `(I+ε_A) A N = R(θ+δ)(I+ε_B) B M` for each near-coincidence
+(least squares, Levenberg–Marquardt, ~1–2 ms per cell). Cells that need more strain than
+allowed, that strain cannot close (residual > `strain_residual_tol` = 1e-6 Å), or whose
+exact twist leaves the window are dropped; per cell the smallest strain is kept.
+
+**Results**
+
+| case | result |
+|---|---|
+| PTO/STO bilayer, 1–45°, step 0.1°, STO ≤ 1 % (`examples/pto_sto_strained_demo.yaml`) | 21 exact cells in 2.0 s, residual ≤ 2e-11 Å; e.g. 7.13° needs −0.076 % on STO (unstrained the same cell is 0.024 Å off), 17.74° needs 0.10 %, 8.13° 0.16 % |
+| aligned PTO/STO cell, twist 0 | STO strain = a_PTO/a_STO − 1 = −0.847 % exactly; with limits 0.5/0.5 % the split is +0.42 % / −0.43 % |
+| PTO/STO/PTO, limits 0 / 1 / 1 %, 9–10° | exact trilayers; layer 1 unstrained, the bilayer block keeps its strain in round 2 |
+| PTO/STO/PTO in `full` mode, limits 0.5 / 0.5 / 1 %, 7.0–7.3° | 7.125° / 7.125°, strains +0.038 / −0.038 / +0.038 %, 2716 atoms, rebuilt with the expected count per layer |
+| rectangular or sheared upper cell (synthetic) | `isotropic` leaves the shape mismatch; `axial` (rectangular) and `full` (rectangular and sheared) close it exactly |
+
+**Limitations**
+- No elastic constants: strain is shared in proportion to the limits, not to stiffness.
+- No Poisson effect: the layer thickness (z) is not changed.
+- `isotropic`/`axial` cannot close shape mismatches; use `full` for different lattice
+  symmetries (e.g. square on hexagonal).
+- The widened tolerance makes the scan return many more raw matches; keep `nmax` modest
+  (±10 in round 1) and use a coarse `degstep` (0.1°).
+- `match.scan` still keeps only the 25 shortest matches per angle.
+
