@@ -12,8 +12,10 @@ loader on top of it, and the spec file is the reproducible record of a job::
     search:
       default: {degmin: 1.0, degmax: 45.0, degstep: 0.01, dtol: 5.0e-4,
                 nmin: -10, nmax: 10, goodangles: [90.0]}
-      rounds:
+      rounds:                       # overrides per round of the tree
         2: {nmin: -40, nmax: 40}
+      interfaces:                   # optional: overrides per twist, k = layer k | layer k+1
+        2: {degmin: 30.0, degmax: 40.0}
     filters:
       max_residual: 1.0e-3
       max_cumulative_residual: null
@@ -44,7 +46,7 @@ from MLM.structure import MoireStructure, PathLike
 
 TOP_LEVEL_KEYS = {"name", "output_dir", "layers", "search", "filters"}
 LAYER_KEYS = {"poscar", "material"}
-SEARCH_KEYS = {"default", "rounds"}
+SEARCH_KEYS = {"default", "rounds", "interfaces"}
 
 
 @dataclass
@@ -92,7 +94,9 @@ def parse_search(data: Optional[dict[str, Any]]) -> SearchSchedule:
     """``search:`` section → :class:`~MLM.search.SearchSchedule`.
 
     Missing ``default`` keys fall back to :class:`~MLM.search.SearchParams`'
-    defaults; ``rounds`` maps a round number to the keys that differ in that round.
+    defaults; ``rounds`` maps a round number to the keys that differ in that round;
+    ``interfaces`` maps an interface number k (layer k | layer k+1) to the keys that
+    differ for that twist, usually its angle window.
 
     >>> parse_search({"default": {"nmin": -10, "nmax": 10}, "rounds": {2: {"nmax": 40, "nmin": -40}}}).params_for_round(2).nmax
     40
@@ -105,7 +109,11 @@ def parse_search(data: Optional[dict[str, Any]]) -> SearchSchedule:
     rounds = {int(number): dict(overrides or {}) for number, overrides in (data.get("rounds") or {}).items()}
     for number, overrides in rounds.items():
         _check_keys(f"search.rounds.{number}", overrides, allowed)
-    return SearchSchedule(SearchParams(**default_data), rounds)
+    interfaces = {int(number): dict(overrides or {})
+                  for number, overrides in (data.get("interfaces") or {}).items()}
+    for number, overrides in interfaces.items():
+        _check_keys(f"search.interfaces.{number}", overrides, allowed)
+    return SearchSchedule(SearchParams(**default_data), rounds, interfaces)
 
 
 def parse_filters(data: Optional[dict[str, Any]]) -> Filters:

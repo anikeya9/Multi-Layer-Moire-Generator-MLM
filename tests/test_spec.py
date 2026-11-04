@@ -86,3 +86,13 @@ def test_run_stack_spec_dry_run(tmp_path):
     spec_path.write_text(yaml.safe_dump(dict(SPEC, output_dir=str(tmp_path / "out"))))
     result = run_stack_spec(spec_path, dry_run=True, log=None)
     assert result.dry_run and not (tmp_path / "out").exists()
+
+
+def test_interfaces_section():
+    data = dict(SPEC, search={"default": {"nmin": -10, "nmax": 10},
+                              "interfaces": {1: {"degmin": 22.0, "degmax": 23.0}, "2": {"degmin": 36.0}}})
+    schedule = parse_stack_spec(data).schedule
+    assert schedule.params_for_round(1, interface=1).degmax == 23.0
+    assert schedule.params_for_round(2, interface=2).degmin == 36.0
+    with pytest.raises(ValueError):
+        parse_stack_spec(dict(SPEC, search={"interfaces": {1: {"degmn": 1}}}))

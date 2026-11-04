@@ -522,6 +522,21 @@ class Step:
         """The block this step produces."""
         return self.lower if self.upper is None else (self.lower[0], self.upper[1])
 
+    @property
+    def interface(self) -> Optional[int]:
+        """Which pair of adjacent layers this step joins: ``k`` = layer k | layer k+1 (1-based).
+
+        Because a twist is measured from the layer directly below, every merge sets
+        exactly one interface: the lower block's top layer against the upper block's
+        bottom layer. Each of the N-1 interfaces is set by exactly one step.
+
+        >>> Step((0, 2), (2, 3)).interface   # L1-2 + L3: layer 2 | layer 3
+        2
+        >>> Step((2, 3), None).interface is None
+        True
+        """
+        return None if self.upper is None else self.upper[0]
+
     def __str__(self) -> str:
         def name(span: Span) -> str:
             first, last = span[0] + 1, span[1]  # 1-based layer numbers for humans
@@ -568,28 +583,57 @@ def format_plan(plan: list[list[Step]]) -> str:
 # ===========================================================================
 @dataclass
 class SearchSchedule:
-    """Search parameters per round: a ``default`` plus overrides keyed by round number.
+    """Search parameters: a ``default``, overrides per round, and overrides per interface.
 
-    >>> schedule = SearchSchedule(SearchParams(nmin=-10, nmax=10), {2: {"nmin": -40, "nmax": 40}})
+    Overrides are applied in this order (later wins):
+
+    1. ``default``
+    2. ``rounds[r]`` — e.g. a larger n range for rounds >= 2, where the lower "lattice"
+       is a moiré cell;
+    3. ``interfaces[k]`` — settings for the twist between layer k and layer k+1
+       (1-based), typically the angle window ``degmin``/``degmax``.
+
+    >>> schedule = SearchSchedule(SearchParams(nmin=-10, nmax=10), {2: {"nmin": -40, "nmax": 40}},
+    ...                           interfaces={2: {"degmin": 36.0, "degmax": 38.0}})
     >>> schedule.params_for_round(1).nmax, schedule.params_for_round(2).nmax
     (10, 40)
+    >>> p = schedule.params_for_round(2, interface=2)
+    >>> p.nmax, p.degmin, p.degmax
+    (40, 36.0, 38.0)
     """
 
     default: SearchParams = field(default_factory=SearchParams)
     rounds: dict[int, dict[str, Any]] = field(default_factory=dict)
+    interfaces: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.rounds = {int(number): dict(overrides) for number, overrides in self.rounds.items()}
-        for number in self.rounds:
-            self.params_for_round(number)  # validate overrides early
+        self.interfaces = {int(number): dict(overrides) for number, overrides in self.interfaces.items()}
+        # Validate every override early, so that a typo fails before any searching.
+        for number, overrides in self.rounds.items():
+            self._apply(self.default, overrides, f"round {number}")
+        for number, overrides in self.interfaces.items():
+            if number < 1:
+                raise ValueError(f"interface numbers start at 1 (layer 1 | layer 2), got {number}")
+            self._apply(self.default, overrides, f"interface {number}")
 
-    def params_for_round(self, round_number: int) -> SearchParams:
-        """``default`` with this round's overrides applied."""
-        overrides = self.rounds.get(round_number, {})
+    @staticmethod
+    def _apply(params: SearchParams, overrides: dict[str, Any], where: str) -> SearchParams:
         unknown = set(overrides) - set(SearchParams.__dataclass_fields__)
         if unknown:
-            raise ValueError(f"unknown search parameter(s) for round {round_number}: {sorted(unknown)}")
-        return replace(self.default, **overrides)
+            raise ValueError(f"unknown search parameter(s) for {where}: {sorted(unknown)}")
+        return replace(params, **overrides)
+
+    def params_for_round(self, round_number: int, interface: Optional[int] = None) -> SearchParams:
+        """``default`` + this round's overrides (+ this interface's overrides, if given)."""
+        params = self._apply(self.default, self.rounds.get(round_number, {}), f"round {round_number}")
+        if interface is not None:
+            params = self._apply(params, self.interfaces.get(interface, {}), f"interface {interface}")
+        return params
+
+    def params_for_step(self, round_number: int, step: Step) -> SearchParams:
+        """Parameters for one step of the plan (round + the interface it joins)."""
+        return self.params_for_round(round_number, step.interface)
 
     @classmethod
     def notebook_defaults(cls, goodangles: Sequence[float] = (90.0,), max_round: int = 10) -> "SearchSchedule":
@@ -600,10 +644,14 @@ class SearchSchedule:
         return cls(default, later)
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain dict in the stack-spec layout (``default`` + ``rounds``)."""
+        """Plain dict in the stack-spec layout (``default`` + ``rounds`` + ``interfaces``)."""
         default = asdict(self.default)
         default["goodangles"] = list(default["goodangles"])
-        return {"default": default, "rounds": {number: dict(o) for number, o in self.rounds.items()}}
+        return {
+            "default": default,
+            "rounds": {number: dict(o) for number, o in self.rounds.items()},
+            "interfaces": {number: dict(o) for number, o in self.interfaces.items()},
+        }
 
 
 @dataclass
@@ -749,9 +797,9 @@ def build_stack(
 
     reports: list[StepReport] = []
     for round_number, steps in enumerate(plan, start=1):
-        params = schedule.params_for_round(round_number)
         new_blocks: dict[Span, list[MoireStructure]] = {}
         for step in steps:
+            params = schedule.params_for_step(round_number, step)
             report = StepReport(round_number, step, len(blocks[step.lower]),
                                 None if step.is_carry else len(blocks[step.upper]),
                                 cost_per_search=None if step.is_carry else params.estimated_cost())
@@ -760,7 +808,8 @@ def build_stack(
                 say(str(report))
                 reports.append(report)
                 continue
-            say(f"round {round_number}: {step}: {report.n_searches} searches "
+            say(f"round {round_number}: {step}: {report.n_searches} searches, twist window "
+                f"{params.degmin:g}–{params.degmax:g}° "
                 f"(~{params.estimated_cost():.2e} lattice-point tests each)")
             started = time.perf_counter()
             passed, n_found = _run_step(blocks[step.lower], blocks[step.upper], params, filters,
@@ -811,9 +860,9 @@ def _dry_run(
     reports = []
     known: dict[Span, Optional[int]] = {(i, i + 1): 1 for i in range(len(layers))}
     for round_number, steps in enumerate(plan, start=1):
-        params = schedule.params_for_round(round_number)
         next_known: dict[Span, Optional[int]] = {}
         for step in steps:
+            params = schedule.params_for_step(round_number, step)
             report = StepReport(round_number, step, known[step.lower],
                                 None if step.is_carry else known[step.upper],
                                 cost_per_search=None if step.is_carry else params.estimated_cost())

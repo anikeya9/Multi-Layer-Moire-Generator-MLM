@@ -163,3 +163,51 @@ def test_four_layers_combine_two_bilayers(tmp_path):
     # The upper bilayer is rotated as a block, its bottom layer by `twist` from layer 2.
     assert four.layer_rotations == pytest.approx([0.0, 22.62, 22.62 + four.twist, 22.62 + four.twist + 22.62])
     assert four.twist_sequence == pytest.approx([22.62, 22.62, four.twist])
+
+
+# --- per-interface windows ------------------------------------------------------------
+def test_step_interface_numbers():
+    plan = plan_rounds(5)
+    interfaces = sorted(step.interface for steps in plan for step in steps if not step.is_carry)
+    assert interfaces == [1, 2, 3, 4]  # each adjacent pair is joined exactly once
+    assert Step((0, 1), (1, 2)).interface == 1
+    assert Step((0, 4), (4, 5)).interface == 4
+
+
+def test_interface_overrides_win_over_rounds():
+    schedule = SearchSchedule(
+        SearchParams(degmin=1.0, degmax=45.0, nmin=-10, nmax=10),
+        {1: {"degmin": 5.0}, 2: {"nmin": -40, "nmax": 40}},
+        interfaces={1: {"degmin": 22.0, "degmax": 23.0}, 3: {"degmin": 10.0, "degmax": 11.0}},
+    )
+    four = plan_rounds(4)  # round 1: (L1+L2) interface 1, (L3+L4) interface 3; round 2: interface 2
+    p1 = schedule.params_for_step(1, four[0][0])
+    p3 = schedule.params_for_step(1, four[0][1])
+    p2 = schedule.params_for_step(2, four[1][0])
+    assert (p1.degmin, p1.degmax) == (22.0, 23.0)
+    assert (p3.degmin, p3.degmax, p3.nmax) == (10.0, 11.0, 10)
+    assert (p2.degmin, p2.degmax, p2.nmax) == (1.0, 45.0, 40)  # round override, no interface override
+    with pytest.raises(ValueError):
+        SearchSchedule(SearchParams(), interfaces={0: {"degmin": 1.0}})
+    with pytest.raises(ValueError):
+        SearchSchedule(SearchParams(), interfaces={1: {"degmn": 1.0}})
+
+
+def test_build_stack_uses_interface_windows(tmp_path):
+    """Four layers with a different window at each of the three interfaces."""
+    root = MoireStructure.from_poscar(BTO, "bto")
+    schedule = SearchSchedule(
+        SearchParams(nmin=-10, nmax=10),
+        interfaces={1: {"degmin": 22.0, "degmax": 23.0},   # L1 | L2
+                    2: {"degmin": 30.0, "degmax": 31.0},   # L2 | L3 (round 2)
+                    3: {"degmin": 36.5, "degmax": 37.5}},  # L3 | L4
+    )
+    result = build_stack([root] * 4, schedule, Filters(max_residual=1e-3), run_dir=tmp_path, log=None)
+    assert result.final
+    rotations = result.final[0].layer_rotations
+    twists_between_layers = [b - a for a, b in zip(rotations, rotations[1:])]
+    assert twists_between_layers[0] == pytest.approx(22.62, abs=1e-6)
+    assert 30.0 <= twists_between_layers[1] < 31.0
+    assert twists_between_layers[2] == pytest.approx(36.87, abs=1e-6)
+    spec = yaml.safe_load((tmp_path / "stack_spec.yaml").read_text())
+    assert spec["search"]["interfaces"][3] == {"degmin": 36.5, "degmax": 37.5}

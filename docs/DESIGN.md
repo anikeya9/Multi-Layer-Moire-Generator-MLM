@@ -404,6 +404,26 @@ No top-K cap for now (decision 10): the goal is to explore the full landscape an
 find as many structures as possible. A top-K knob may be added later if the candidate
 count explodes; the code leaves room for it.
 
+### Search parameters per round and per interface
+
+Because a twist is measured from the layer directly below (§8 #32), every merge in the
+tree sets exactly one **interface** — the lower block's top layer against the upper
+block's bottom layer — and each of the N−1 interfaces is set by exactly one merge
+(`Step.interface`, k = layer k | layer k+1). Parameters are therefore resolved as
+`default` → `rounds[r]` → `interfaces[k]` (later wins): rounds carry what depends on the
+depth of the tree (the n range, larger once the lower "lattice" is a moiré cell),
+interfaces carry what the user thinks of per pair of layers (the twist window).
+
+```yaml
+search:
+  default: {degstep: 0.01, dtol: 5.0e-4, nmin: -10, nmax: 10, goodangles: [90.0]}
+  rounds:
+    2: {nmin: -40, nmax: 40}
+  interfaces:
+    1: {degmin: 22.0, degmax: 23.0}   # layer 1 | layer 2
+    2: {degmin: 36.0, degmax: 38.0}   # layer 2 | layer 3
+```
+
 ### Atomic operation
 
 The whole driver is orchestration over one function:
@@ -418,7 +438,7 @@ The whole driver is orchestration over one function:
 
 | Kind | Direction | Holds |
 |---|---|---|
-| **Stack spec** | input | the job: ordered POSCAR list, per-round search params, filter thresholds |
+| **Stack spec** | input | the job: ordered POSCAR list, search params (default, per round, per interface), filter thresholds |
 | **Structure recipe** | output | one candidate's metadata + lineage (the uniform schema of §5) |
 
 The engine is the Python API (takes a layer list + params); the stack-spec YAML is a
