@@ -107,3 +107,17 @@ def test_to_builtin_converts_nested_numpy():
     out = _to_builtin({"x": [np.int64(1), np.array([1.5, 2.5])], "y": np.bool_(True)})
     assert out == {"x": [1, [1.5, 2.5]], "y": True}
     assert type(out["x"][0]) is int
+
+
+def test_schema_version_written_and_old_files_migrate(bto_root, tmp_path):
+    from MLM.structure import SCHEMA_VERSION, migrate_record
+
+    data = yaml.safe_load(bto_root.to_yaml(tmp_path).read_text())
+    assert data["schema_version"] == SCHEMA_VERSION == 2
+    old = {key: value for key, value in data.items() if key not in ("schema_version", "layer_strains")}
+    migrated = migrate_record(old)
+    assert migrated["schema_version"] == 2 and migrated["layer_strains"] == [[[0.0, 0.0], [0.0, 0.0]]]
+    assert MoireStructure.from_dict(old) == bto_root  # a version-1 file loads unchanged
+    assert MoireStructure.from_dict(old).id == bto_root.id
+    with pytest.raises(ValueError):
+        migrate_record(dict(data, schema_version=SCHEMA_VERSION + 1))

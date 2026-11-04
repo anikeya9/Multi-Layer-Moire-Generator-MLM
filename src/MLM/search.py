@@ -22,7 +22,10 @@ Layout of this file
 
 from __future__ import annotations
 
+import multiprocessing
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -30,7 +33,8 @@ from typing import Any, Callable, Optional, Sequence
 import numpy as np
 import yaml
 
-from MLM.index import SPEC_FILENAME, RunStore
+from MLM.index import SPEC_FILENAME, RunStore, get
+from MLM.runinfo import RunInfo
 from MLM.match import run_and_filter
 from MLM.strain import STRAIN_MODES, fit_strain, scan_tolerance, strain_magnitude
 from MLM.structure import MoireStructure, PathLike, read_primitive
@@ -824,6 +828,7 @@ class StackResult:
     reports: list[StepReport]
     final: list[MoireStructure]
     dry_run: bool = False
+    status: str = "finished"  # "finished", or "stopped" if should_stop() ended the run early
 
     def summary(self) -> str:
         """Readable multi-line summary (plan + per-step counts)."""
@@ -873,6 +878,10 @@ def build_stack(
     spec: Optional[dict[str, Any]] = None,
     log: Optional[Callable[[str], None]] = print,
     strain_limits: Optional[Sequence[float]] = None,
+    workers: Optional[int] = 1,
+    resume: bool = False,
+    should_stop: Optional[Callable[[], bool]] = None,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> StackResult:
     """Build every commensurate N-layer cell by a tournament-tree reduction.
 
@@ -893,6 +902,15 @@ def build_stack(
       layer, 0 = rigid; default: all rigid). A layer is strained only in the first
       search it takes part in, i.e. while it is still a single layer; blocks built in
       earlier rounds stay rigid. The strain mode comes from the search parameters.
+    - ``workers``: processes for the searches of one step (they are independent);
+      ``None`` or 0 = all CPU cores. Results are identical to ``workers=1``.
+    - ``resume=True`` continues an interrupted run in ``run_dir``: steps recorded in
+      ``progress.yaml`` are not searched again. Refused if the job changed.
+    - ``should_stop``: called before every search; returning True stops the run cleanly
+      (finished steps are kept, ``status = "stopped"``; resume later).
+    - ``progress_callback``: called after every search with
+      ``{"round", "step", "done", "total"}``.
+    - Writes ``run_info.yaml`` (versions, git commit, timings; see :mod:`MLM.runinfo`).
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
     >>> schedule = SearchSchedule(SearchParams(degmin=22, degmax=23), {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}})
@@ -916,12 +934,24 @@ def build_stack(
     if dry_run:
         return _dry_run(layers, plan, schedule, run_dir, say)
 
-    store = RunStore(Path(run_dir))
+    run_dir = Path(run_dir)
+    store = RunStore(run_dir)
+    job = job_to_spec_dict(run_dir.name, layers, schedule, filters, run_dir, strain_limits)
+    progress = _Progress(run_dir, job)
+    if resume:
+        progress.load_for_resume()
+        store.load_existing()
+        say(f"resuming: {len(progress.completed)} step(s) already done")
+    elif progress.path.exists():
+        say(f"note: {run_dir} already holds a run; starting a new one (resume=True continues it)")
     if spec is None:
-        spec = job_to_spec_dict(Path(run_dir).name, layers, schedule, filters, run_dir, strain_limits)
+        spec = job
     if spec:
         with open(store.run_dir / SPEC_FILENAME, "w", encoding="utf-8") as handle:
             yaml.safe_dump(spec, handle, sort_keys=False)
+    info = RunInfo(run_dir)
+    info.start({"workers": _resolve_workers(workers), "resumed": bool(resume)})
+    progress.write()
 
     # Round 0: the roots. ``blocks`` maps a span to its candidates that passed.
     blocks: dict[Span, list[MoireStructure]] = {}
@@ -932,6 +962,7 @@ def build_stack(
     say(format_plan(plan))
 
     reports: list[StepReport] = []
+    stopped = False
     for round_number, steps in enumerate(plan, start=1):
         new_blocks: dict[Span, list[MoireStructure]] = {}
         for step in steps:
@@ -944,24 +975,108 @@ def build_stack(
                 say(str(report))
                 reports.append(report)
                 continue
+            done = progress.lookup(round_number, step)
+            if done is not None:  # resume: this step finished in an earlier session
+                new_blocks[step.result] = [get(run_dir, structure_id) for structure_id in done["passed"]]
+                report.n_found, report.n_passed, report.seconds = done["found"], len(done["passed"]), done["seconds"]
+                say(f"{report} [from the earlier session]")
+                reports.append(report)
+                continue
             limits = (_block_strain_limit(step.lower, strain_limits), _block_strain_limit(step.upper, strain_limits))
             strain_note = f", strain ≤ {limits[0]:g}% / {limits[1]:g}% ({params.strain_mode})" if any(limits) else ""
             say(f"round {round_number}: {step}: {report.n_searches} searches, twist window "
                 f"{params.degmin:g}–{params.degmax:g}°{strain_note} "
                 f"(~{params.estimated_cost():.2e} lattice-point tests each)")
             started = time.perf_counter()
-            passed, n_found = _run_step(blocks[step.lower], blocks[step.upper], params, filters,
-                                        store, round_number, search_dirs, limits)
+            outcome = _run_step(blocks[step.lower], blocks[step.upper], params, filters, store, round_number,
+                                search_dirs, limits, workers, should_stop,
+                                lambda done_, total_, r=round_number, s=step: _notify(progress_callback, r, s, done_, total_))
+            store.write_index()  # keep the index current after every step
+            if outcome is None:  # stopped by the caller
+                stopped = True
+                break
+            passed, n_found = outcome
             report.n_found, report.n_passed = n_found, len(passed)
             report.seconds = time.perf_counter() - started
             new_blocks[step.result] = passed
-            store.write_index()  # keep the index current after every step
+            progress.mark_done(round_number, step, [record.id for record in passed], n_found, report.seconds)
+            info.add_step({"round": round_number, "step": str(step), "searches": report.n_searches,
+                           "found": n_found, "passed": len(passed), "seconds": round(report.seconds, 3)})
             say(str(report))
             reports.append(report)
+        if stopped:
+            break
         blocks = new_blocks
 
-    full_span = (0, len(layers))
-    return StackResult(Path(run_dir), plan, reports, blocks[full_span], dry_run=False)
+    if stopped:
+        say("stopped; run again with resume=True to continue")
+        info.finish("stopped")
+        return StackResult(run_dir, plan, reports, [], dry_run=False, status="stopped")
+    final = blocks[(0, len(layers))]
+    info.finish("finished", final_candidates=len(final))
+    return StackResult(run_dir, plan, reports, final, dry_run=False)
+
+
+def _notify(callback: Optional[Callable[[dict[str, Any]], None]], round_number: int, step: Step,
+            done: int, total: int) -> None:
+    """Forward search progress to the caller (e.g. a GUI progress bar)."""
+    if callback is not None:
+        callback({"round": round_number, "step": str(step), "done": done, "total": total})
+
+
+def _resolve_workers(workers: Optional[int]) -> int:
+    """``None``/0 → all CPU cores; otherwise the given number (at least 1)."""
+    if not workers:
+        return os.cpu_count() or 1
+    return max(1, int(workers))
+
+
+#: Name of the file that records finished steps (used by ``resume=True``).
+PROGRESS_FILENAME = "progress.yaml"
+
+
+class _Progress:
+    """Finished steps of a run, so that an interrupted run can be resumed.
+
+    ``progress.yaml`` holds the job (to refuse resuming a *different* job in the same
+    directory) and, for every finished step, the ids that passed the filters.
+    """
+
+    def __init__(self, run_dir: Path, job: dict[str, Any]) -> None:
+        self.path = Path(run_dir) / PROGRESS_FILENAME
+        self.job = _comparable_job(job)
+        self.completed: list[dict[str, Any]] = []
+
+    def load_for_resume(self) -> None:
+        if not self.path.exists():
+            raise FileNotFoundError(f"cannot resume: no {PROGRESS_FILENAME} in {self.path.parent}")
+        with open(self.path, "r", encoding="utf-8") as handle:
+            saved = yaml.safe_load(handle) or {}
+        if _comparable_job(saved.get("job", {})) != self.job:
+            raise ValueError(f"cannot resume: {self.path.parent} holds a different job "
+                             "(layers, search parameters or filters changed); use another run_dir")
+        self.completed = list(saved.get("completed", []))
+
+    def lookup(self, round_number: int, step: Step) -> Optional[dict[str, Any]]:
+        for entry in self.completed:
+            if entry["round"] == round_number and entry["step"] == str(step):
+                return entry
+        return None
+
+    def mark_done(self, round_number: int, step: Step, passed_ids: list[str], found: int, seconds: float) -> None:
+        self.completed.append({"round": round_number, "step": str(step), "passed": passed_ids,
+                               "found": found, "seconds": round(seconds, 3)})
+        self.write()
+
+    def write(self) -> None:
+        with open(self.path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump({"job": self.job, "completed": self.completed}, handle, sort_keys=False)
+
+
+def _comparable_job(job: dict[str, Any]) -> dict[str, Any]:
+    """The parts of a job that decide its results (not its name or output directory)."""
+    return yaml.safe_load(yaml.safe_dump({key: value for key, value in job.items()
+                                          if key not in ("name", "output_dir")}))
 
 
 def _check_strain_limits(strain_limits: Optional[Sequence[float]], n_layers: int) -> list[float]:
@@ -982,6 +1097,12 @@ def _block_strain_limit(span: Span, strain_limits: Sequence[float]) -> float:
     return strain_limits[first] if stop - first == 1 else 0.0
 
 
+def _search_task(task: tuple[Any, ...]) -> list[MoireStructure]:
+    """One search, as a top-level function so that worker processes can run it."""
+    lower, upper, params, search_dirs, strain_limits = task
+    return find_candidates(lower, upper, params, search_dirs, strain_limits)
+
+
 def _run_step(
     lowers: list[MoireStructure],
     uppers: list[MoireStructure],
@@ -991,18 +1112,52 @@ def _run_step(
     round_number: int,
     search_dirs: Sequence[PathLike],
     strain_limits: tuple[float, float] = (0.0, 0.0),
-) -> tuple[list[MoireStructure], int]:
-    """All lower x upper searches of one step; store everything, return the passing ones."""
+    workers: Optional[int] = 1,
+    should_stop: Optional[Callable[[], bool]] = None,
+    on_search_done: Optional[Callable[[int, int], None]] = None,
+) -> Optional[tuple[list[MoireStructure], int]]:
+    """All lower x upper searches of one step; store everything, return the passing ones.
+
+    Searches run in ``workers`` processes when there are several; candidates are always
+    stored in the same (lower, upper) order, so results do not depend on ``workers``.
+    Returns ``None`` if ``should_stop()`` ended the step early.
+    """
+    tasks = [(lower, upper, params, tuple(search_dirs), strain_limits) for lower in lowers for upper in uppers]
+    n_workers = min(_resolve_workers(workers), len(tasks))
+
+    def results():
+        if n_workers <= 1:
+            for task in tasks:
+                if should_stop is not None and should_stop():
+                    return
+                yield _search_task(task)
+            return
+        # "spawn", not "fork": forking after polars/numpy have started their thread pools
+        # can deadlock. Spawned workers import MLM afresh (~1 s start-up each).
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+            futures = [pool.submit(_search_task, task) for task in tasks]
+            for future in futures:  # in submission order: deterministic output
+                if should_stop is not None and should_stop():
+                    for pending in futures:
+                        pending.cancel()
+                    return
+                yield future.result()
+
     passed: dict[str, MoireStructure] = {}  # keyed by id: identical recipes count once
     n_found = 0
-    for lower in lowers:
-        for upper in uppers:
-            for candidate in find_candidates(lower, upper, params, search_dirs, strain_limits):
-                ok = filters.passes(candidate)
-                store.add(candidate, round_number=round_number, passed_filter=ok)
-                n_found += 1
-                if ok:
-                    passed.setdefault(candidate.id, candidate)
+    n_done = 0
+    for candidates in results():
+        for candidate in candidates:
+            ok = filters.passes(candidate)
+            store.add(candidate, round_number=round_number, passed_filter=ok)
+            n_found += 1
+            if ok:
+                passed.setdefault(candidate.id, candidate)
+        n_done += 1
+        if on_search_done is not None:
+            on_search_done(n_done, len(tasks))
+    if n_done < len(tasks):
+        return None
     return list(passed.values()), n_found
 
 

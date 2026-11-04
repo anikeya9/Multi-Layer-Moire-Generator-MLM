@@ -116,6 +116,19 @@ class RunStore:
             self.rows[record.id] = index_row(record, round_number, passed_filter, relative)
         return path
 
+    def load_existing(self) -> None:
+        """Start from the rows of an existing ``index.csv`` (used when resuming a run)."""
+        path = self.run_dir / INDEX_FILENAME
+        if not path.exists():
+            return
+        table = load_index(self.run_dir)
+        for row in table.to_dict(orient="records"):
+            # NaN (pandas' "missing") back to None, as written by index_row
+            clean = {key: (None if isinstance(value, float) and value != value else value)
+                     for key, value in row.items()}
+            clean["parents"] = clean["parents"] or ""
+            self.rows.setdefault(clean["id"], clean)
+
     def write_index(self) -> Path:
         """(Re)write ``index.csv`` from the rows collected so far."""
         return write_index(self.run_dir, list(self.rows.values()))

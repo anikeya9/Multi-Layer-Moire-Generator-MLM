@@ -172,6 +172,8 @@ def run_stack_spec(
     base_dir: Optional[PathLike] = None,
     dry_run: bool = False,
     log: Optional[Callable[[str], None]] = print,
+    workers: Optional[int] = 1,
+    resume: bool = False,
 ) -> StackResult:
     """Load a stack spec and run it with :func:`MLM.search.build_stack`.
 
@@ -194,6 +196,8 @@ def run_stack_spec(
         spec={},  # we copy the original file instead (keeps the user's comments)
         log=log,
         strain_limits=[layer.strain for layer in spec.layers],
+        workers=workers,
+        resume=resume,
     )
     if not dry_run:
         shutil.copyfile(path, run_dir / SPEC_FILENAME)

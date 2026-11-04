@@ -66,7 +66,15 @@ SCHEMA_KEYS: tuple[str, ...] = (
     "layer_residuals",
     "coefficients",
     "layer_strains",
+    "schema_version",
 )
+
+#: Version of the YAML recipe format. Increase it when the schema changes and add a
+#: step to :func:`migrate_record` so that older files keep loading.
+#:
+#: - 1: the original schema (no ``layer_strains``, no ``schema_version`` key)
+#: - 2: ``layer_strains`` (heterostrain) and ``schema_version`` added
+SCHEMA_VERSION = 2
 
 #: Number of hex characters of the sha1 hash used in the id.
 HASH_LENGTH = 6
@@ -119,6 +127,27 @@ def _rounded_for_hash(value: Any) -> Any:
     if isinstance(value, float):
         return round(value, HASH_DECIMALS) + 0.0
     return value
+
+
+def migrate_record(data: dict[str, Any]) -> dict[str, Any]:
+    """Bring a recipe dict written by any older MLM up to :data:`SCHEMA_VERSION`.
+
+    Files without a ``schema_version`` key are version 1. Each step below upgrades by
+    one version; the input dict is not modified.
+
+    >>> migrate_record({"n_layers": 1})["layer_strains"], migrate_record({"n_layers": 1})["schema_version"]
+    ([[[0.0, 0.0], [0.0, 0.0]]], 2)
+    """
+    data = dict(data)
+    version = int(data.get("schema_version", 1))
+    if version > SCHEMA_VERSION:
+        raise ValueError(f"recipe has schema_version {version}, but this MLM reads up to "
+                         f"{SCHEMA_VERSION}: please update MLM")
+    if version < 2:  # 1 -> 2: layer_strains added (unstrained = zeros)
+        data.setdefault("layer_strains", [[[0.0, 0.0], [0.0, 0.0]] for _ in range(int(data["n_layers"]))])
+        version = 2
+    data["schema_version"] = version
+    return data
 
 
 def material_label(materials: Sequence[str]) -> str:
@@ -310,10 +339,12 @@ class MoireStructure:
         >>> MoireStructure.from_dict(root.to_dict()) == root
         True
         """
+        data = migrate_record(data)
         unknown = set(data) - set(SCHEMA_KEYS)
         if unknown:
             raise ValueError(f"unknown keys in structure record: {sorted(unknown)}")
-        kwargs = {key: value for key, value in data.items() if key != "angle_between_vectors"}
+        derived = {"angle_between_vectors", "schema_version"}  # recomputed / format metadata
+        kwargs = {key: value for key, value in data.items() if key not in derived}
         return cls(**kwargs)
 
     @classmethod
@@ -351,6 +382,7 @@ class MoireStructure:
             "layer_residuals": self.layer_residuals,
             "coefficients": self.coefficients,
             "layer_strains": [[list(row) for row in tensor] for tensor in self.layer_strains],
+            "schema_version": SCHEMA_VERSION,
         }
         return _to_builtin(data)
 
@@ -384,6 +416,7 @@ class MoireStructure:
         """
         content = _rounded_for_hash(self.to_dict())
         content.pop("id")
+        content.pop("schema_version")  # file-format metadata, not content: ids survive upgrades
         if not self.is_strained:
             content.pop("layer_strains")
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
