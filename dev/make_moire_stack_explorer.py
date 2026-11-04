@@ -42,7 +42,9 @@ orientations are 0°, 22.62° and 22.62 + 36.87 = 59.49°.
 **Strain (heterostructures).** Give a layer a strain limit in % and MLM will strain it
 just enough to make near-matches *exactly* commensurate (residual → 0). The strain is
 shared between the two layers of a pair in proportion to their limits, and reported per
-layer as a tensor in the layer's own (POSCAR) frame.""")
+layer as a tensor in the layer's own (POSCAR) frame. The **worked example** at the end of
+this notebook shows it on a PTO/STO heterostructure; it runs on its own and does not use
+your input.""")
 
 code("""import os
 os.environ["TQDM_DISABLE"] = "1"   # hide match.py's progress bars
@@ -143,7 +145,7 @@ MAX_LAYER_RESIDUAL = 1e-3        # Å, error of the final cell vs every layer (N
 
 STRAIN_MODE = "isotropic"        # "isotropic", "axial" or "full" (used only with strain limits)
 
-# Example with strain (heterostructure): replace the values above by
+# Example with strain (heterostructure; see also the worked example at the end): replace the values above by
 # LAYERS = [
 #     ("moire_structures/PTO_STO/pto_tetra_monolayer.vasp", "pto", 0.0),                    # rigid substrate
 #     ("moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp", "sto", 1.0),  # up to 1 %
@@ -286,7 +288,10 @@ The full-stack candidates that passed the limits, smallest cell (fewest atoms) f
 - the cell size and the number of atoms it will contain;
 - with strain: the largest principal strain of each layer, in %.""")
 
-code("""def candidate_table(records):
+code("""def candidate_table(records, with_strain=None):
+    \"\"\"One row per structure; strain columns if `with_strain` (default: if any layer may strain).\"\"\"
+    if with_strain is None:
+        with_strain = any(strain_limits)
     rows = []
     for record in records:
         rotations = record.layer_rotations
@@ -305,7 +310,7 @@ code("""def candidate_table(records):
                     "atoms": n_atoms,
                     "residual (Å)": record.residual,
                     "max layer residual (Å)": record.worst_layer_residual})
-        if any(strain_limits):
+        if with_strain:
             for k, strain in enumerate(record.strain_tensors(), start=1):
                 row[f"strain L{k} (%)"] = round(100 * float(np.max(np.abs(np.linalg.eigvalsh(strain)))), 4)
         rows.append(row)
@@ -385,6 +390,108 @@ if chosen is not None:
     for fmt in FORMATS:
         path = write_structure(run_dir, chosen.id, fmt=fmt, interlayer_gap=INTERLAYER_GAP, vacuum=VACUUM)
         print(f"{fmt:7s} -> {path.relative_to(REPO)}")""")
+
+md("""## Worked example: a strained heterostructure (PTO / STO)
+
+This section is independent of your input above. It has its own settings and writes to
+`runs/example_pto_sto_*`.
+
+PbTiO₃ (PTO, a = 3.880 Å) and SrTiO₃ (STO, a = 3.913 Å) are both square, with a lattice
+mismatch of 0.85 %. Rigid layers are never exactly commensurate: the best cells are
+0.008–0.03 Å off (`notebooks/Bi-layer_structure_finder.ipynb`). Here PTO is the rigid
+substrate and STO may strain by up to 1 %.""")
+
+code("""EXAMPLE_LAYERS = [   # (POSCAR, label, max strain in %)
+    ("moire_structures/PTO_STO/pto_tetra_monolayer.vasp", "pto", 0.0),                    # rigid substrate
+    ("moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp", "sto", 1.0),  # may strain by 1 %
+]
+EXAMPLE_TWIST_RANGE = (5.0, 10.0)   # degrees, STO relative to PTO
+
+example_roots = [MoireStructure.from_poscar(poscar, label, search_dirs=[REPO]) for poscar, label, _ in EXAMPLE_LAYERS]
+a_pto = np.linalg.norm(example_roots[0].lattice_vectors[0])
+a_sto = np.linalg.norm(example_roots[1].lattice_vectors[0])
+print(f"a(PTO) = {a_pto:.4f} Å, a(STO) = {a_sto:.4f} Å, mismatch a_PTO/a_STO - 1 = {100 * (a_pto / a_sto - 1):.3f} %")
+
+
+def run_example(name, limits, dtol, degstep):
+    \"\"\"One PTO/STO bilayer search in the example window with the given strain limits (%).\"\"\"
+    params = SearchParams(degmin=EXAMPLE_TWIST_RANGE[0], degmax=EXAMPLE_TWIST_RANGE[1], degstep=degstep,
+                          dtol=dtol, nmin=-10, nmax=10, goodangles=(90.0,), strain_mode="isotropic")
+    example_dir = REPO / "runs" / name
+    shutil.rmtree(example_dir, ignore_errors=True)
+    run = build_stack(example_roots, SearchSchedule(params), Filters(), run_dir=example_dir,
+                      search_dirs=[REPO], log=None, strain_limits=limits)
+    return example_dir, run.final""")
+
+md("""### Rigid vs strained
+
+The same twist window is searched twice:
+- **rigid:** both lattices fixed, with the bilayer notebook's tolerance `dtol = 9e-3`
+  (needed to find anything at all);
+- **strained:** STO may strain by up to 1 %, and every near-match is strained into an
+  exact one.""")
+
+code("""rigid_dir, rigid = run_example("example_pto_sto_rigid", [0.0, 0.0], dtol=9e-3, degstep=0.01)
+strained_dir, strained = run_example("example_pto_sto_strained", [0.0, 1.0], dtol=5e-4, degstep=0.1)
+
+
+def by_twist(records, label):
+    rows = [{"twist (deg)": round(r.twist, 2), f"{label} residual (Å)": r.residual,
+             f"{label} STO strain (%)": round(r.layer_strains[1][0][0], 4)} for r in records]
+    return pd.DataFrame(rows, columns=["twist (deg)", f"{label} residual (Å)", f"{label} STO strain (%)"])
+
+
+comparison = by_twist(rigid, "rigid").drop(columns="rigid STO strain (%)").merge(
+    by_twist(strained, "strained"), on="twist (deg)", how="outer").sort_values("twist (deg)")
+print(f"rigid: {len(rigid)} cell(s), strained: {len(strained)} cell(s) in {EXAMPLE_TWIST_RANGE[0]}–{EXAMPLE_TWIST_RANGE[1]}°")
+comparison.reset_index(drop=True)""")
+
+md("""How to read this table:
+- **Rigid residuals** are hundredths of an Å. **Strained residuals** are ~1e-11 Å, i.e. exact
+  to machine precision.
+- Strain also finds cells that rigid lattices miss completely (empty rigid columns).
+- Each strained cell needs a different, small strain. Pick the one that best suits your
+  simulation (cell size against strain).""")
+
+md("""### Sharing the strain
+
+With limits 0 / 1 % only STO strains. Allowing both layers 0.5 % splits the mismatch
+between them in proportion to the limits: PTO is stretched and STO compressed by about
+the same amount.""")
+
+code("""shared_dir, shared = run_example("example_pto_sto_shared", [0.5, 0.5], dtol=5e-4, degstep=0.1)
+sharing = []
+for label, records in [("PTO rigid, STO ≤ 1 %", strained), ("both ≤ 0.5 %", shared)]:
+    for record in records:
+        if round(record.twist, 2) == 7.13:
+            sharing.append({"limits": label, "twist (deg)": round(record.twist, 4),
+                            "PTO strain (%)": round(record.layer_strains[0][0][0], 4),
+                            "STO strain (%)": round(record.layer_strains[1][0][0], 4),
+                            "residual (Å)": record.residual})
+pd.DataFrame(sharing)""")
+
+md("""### The smallest strained cell
+
+Rebuilt from its recipe, with STO strained by the stored tensor. The atom count of every
+layer matches (cell area / strained primitive area) × atoms per cell, which confirms that
+the strained STO layer tiles the cell exactly.""")
+
+code("""example_table = candidate_table(strained, with_strain=True)
+display(example_table)
+
+example = get(strained_dir, example_table.loc[0, "id"])
+print("id:", example.id)
+print("strain tensor per layer (%, own POSCAR frame):")
+for k, tensor in enumerate(example.layer_strains, start=1):
+    print(f"  layer {k} ({example.material[k - 1]}): {np.round(tensor, 4).tolist()}")
+example_built = build_atoms(example, search_dirs=[REPO])
+print("atoms per layer:", example_built.layer_counts, "(expected", example_built.expected_counts, ")")
+plot_top_view(example, example_built)
+for fmt in ["vasp", "lammps"]:
+    print(f"{fmt:7s} -> {write_structure(strained_dir, example.id, fmt=fmt).relative_to(REPO)}")""")
+
+md("""The same job as a stack spec, to run from the command line:
+`python -m MLM run examples/pto_sto_strained_demo.yaml` (window 1–45°).""")
 
 md("""## Coming back later
 

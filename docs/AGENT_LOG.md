@@ -319,3 +319,13 @@ standard conventions (DESIGN.md §11, #33–#44).
 - `examples/pto_sto_strained_demo.yaml`: 21 exact cells in 2 s.
 
 **Tests:** 109 passed (28 new in `tests/test_strain.py`).
+
+## 2026-11-04 — Worked strain example in the explorer notebook
+
+Added a self-contained section "Worked example: a strained heterostructure (PTO / STO)" at
+the end of `notebooks/moire_stack_explorer.ipynb` (independent of the input cell; writes
+`runs/example_pto_sto_*`): rigid vs strained search over 5–10° (rigid: 1 cell, 7.13° at
+0.024 Å; strained, STO ≤ 1 %: 5 exact cells, residual ≤ 2e-11 Å, strains −0.24 … +0.95 %),
+strain sharing at 7.13° (0 / −0.076 % vs +0.038 / −0.038 %), and the rebuild of the
+smallest strained cell (9.46°, 511 atoms, counts as expected) written as VASP and LAMMPS.
+`candidate_table` got a `with_strain` argument. Notebook executed, 0 errors; 109 tests pass.

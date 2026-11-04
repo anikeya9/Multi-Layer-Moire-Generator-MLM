@@ -349,7 +349,8 @@ find("runs/strained", max_strain=0.3)                  # index column max_strain
 
 Stack spec: `strain: 1.0` next to a layer, `strain_mode:` in `search.default` (see
 `examples/pto_sto_strained_demo.yaml`). Notebook: third entry of each `LAYERS` tuple and
-`STRAIN_MODE` in `notebooks/moire_stack_explorer.ipynb`.
+`STRAIN_MODE` in `notebooks/moire_stack_explorer.ipynb`; its last section is a worked
+PTO/STO example (rigid vs strained, strain sharing, rebuild of the smallest cell).
 
 **How it works.** The normal search runs with an automatically widened tolerance, then
 `strain.fit_strain` solves `(I+ε_A) A N = R(θ+δ)(I+ε_B) B M` for each near-coincidence
