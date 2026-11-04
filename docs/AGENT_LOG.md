@@ -329,3 +329,19 @@ the end of `notebooks/moire_stack_explorer.ipynb` (independent of the input cell
 strain sharing at 7.13° (0 / −0.076 % vs +0.038 / −0.038 %), and the rebuild of the
 smallest strained cell (9.46°, 511 atoms, counts as expected) written as VASP and LAMMPS.
 `candidate_table` got a `with_strain` argument. Notebook executed, 0 errors; 109 tests pass.
+## 2026-11-04 — Heterostructure worked example in the explorer notebook
+
+Added "Worked example: a heterostructure (PTO / STO / PTO)" at the end of
+`notebooks/moire_stack_explorer.ipynb` (independent of the input cell). It runs
+`examples/pto_sto_pto_demo.yaml` with `run_stack_spec` and shows: the round-1 bilayers
+against the old `tblstopto.pkl` (28.99° 0.008259 Å, 29.74° 0.023813 Å — identical);
+the 19 trilayers with step residual vs max layer residual (median 161× the last step,
+5.0× the cumulative residual); and the smallest passing trilayer (29.74° / 7.13°, layers at
+0 / 29.74 / 36.87°, 2716 atoms, 910/896/910 per layer as expected) written as VASP and
+LAMMPS. Notebook executed, 0 errors.
+
+## 2026-11-04 — Merged claude-edits into with-straining
+
+The explorer notebook now ends with both worked examples: 1. the rigid PTO / STO / PTO
+heterostructure (from `claude-edits`), 2. the strained PTO / STO heterostructure.
+
