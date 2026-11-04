@@ -40,7 +40,7 @@ import numpy as np
 import yaml
 
 from MLM.angle_between import angle_between
-from MLM.moire_lattice_vector_finder import read_vasp
+from MLM.io import read_structure
 
 PathLike = Union[str, Path]
 
@@ -158,13 +158,17 @@ def resolve_path(path: PathLike, search_dirs: Sequence[PathLike] = ()) -> Path:
 
 @lru_cache(maxsize=None)
 def _read_primitive_cached(resolved_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Read a POSCAR once and cache it (search and build read the same files often)."""
-    lattice, atom_types, coords = read_vasp(resolved_path)
-    cell = np.array([lattice["a"], lattice["b"], lattice["c"]], dtype=float)
+    """Read a layer file once and cache it (search and build read the same files often).
+
+    Any format ASE reads works: POSCAR/CONTCAR in every variant (scale factor, Direct
+    coordinates, Selective Dynamics) and CIF.
+    """
+    atoms = read_structure(resolved_path)
+    cell = np.array(atoms.cell, dtype=float)
     _check_in_plane(cell, resolved_path)
-    coords = np.atleast_2d(coords).astype(float)
+    coords = np.atleast_2d(np.array(atoms.positions, dtype=float))
     in_plane = cell[:2, :2].copy()
-    return in_plane, cell, np.asarray(atom_types), coords
+    return in_plane, cell, np.array(atoms.get_chemical_symbols()), coords
 
 
 def _check_in_plane(cell: np.ndarray, path: str) -> None:

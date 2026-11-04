@@ -3,17 +3,8 @@ import pandas as pd
 from numba import njit, prange
 import multiprocessing as mp
 
-def read_vasp(file_path):
-    lattice_vectors = {}
-    lattice_vectors['a'] = np.loadtxt(file_path, skiprows=2, max_rows=1)
-    lattice_vectors['b'] = np.loadtxt(file_path, skiprows=3, max_rows=1)
-    lattice_vectors['c'] = np.loadtxt(file_path, skiprows=4, max_rows=1)
-    atom_type = np.loadtxt(file_path, skiprows=5, max_rows=1, dtype='str')
-    atom_counts = np.loadtxt(file_path, skiprows=6,max_rows=1, dtype = 'int')
-    atom_type_arr = np.repeat(atom_type, atom_counts)
-    data = np.loadtxt(file_path, skiprows = 8)
-    
-    return lattice_vectors, atom_type_arr, data
+# Kept under this name for the notebooks; the implementation lives in MLM.io (ASE-based).
+from MLM.io import read_vasp  # noqa: E402,F401
 
 @njit
 def rotation_matrix(theta: float) -> np.ndarray:

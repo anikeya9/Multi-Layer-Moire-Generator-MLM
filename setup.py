@@ -19,5 +19,12 @@ setup(
         "scipy",  # optional speed-up used by structure_writer.select_atoms_fractional
         "pyyaml",
     ],
-    extras_require={"test": ["pytest"]},
+    extras_require={
+        "test": ["pytest"],
+        "gui": ["ipywidgets", "py3Dmol", "voila"],
+        "checks": ["spglib"],
+        "dev": ["pytest", "ruff", "mypy", "pre-commit", "nbconvert", "ipykernel"],
+    },
+    # `mlm run|find|show|write|gui ...` (same as `python -m MLM ...`)
+    entry_points={"console_scripts": ["mlm = MLM.cli:main"]},
 )
