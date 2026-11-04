@@ -37,7 +37,10 @@ you need them.
 
 **Angle convention.** A twist is the anticlockwise rotation of a layer relative to the
 layer **directly below** it. For three layers with twists 22.62° and 36.87°, the absolute
-orientations are 0°, 22.62° and 22.62 + 36.87 = 59.49°.""")
+orientations are 0°, 22.62° and 22.62 + 36.87 = 59.49°.
+
+The **worked example** at the end (a PTO / STO / PTO heterostructure) runs on its own
+and does not use your input.""")
 
 code("""import os
 os.environ["TQDM_DISABLE"] = "1"   # hide match.py's progress bars
@@ -52,6 +55,7 @@ import matplotlib.pyplot as plt
 from MLM.structure import MoireStructure, read_primitive
 from MLM.search import SearchParams, SearchSchedule, Filters, build_stack, plan_rounds, job_to_spec_dict
 from MLM.index import find, get, lineage, load_index
+from MLM.spec import run_stack_spec
 from MLM.build import build_atoms, write_structure
 
 
@@ -335,6 +339,89 @@ if chosen is not None:
     for fmt in FORMATS:
         path = write_structure(run_dir, chosen.id, fmt=fmt, interlayer_gap=INTERLAYER_GAP, vacuum=VACUUM)
         print(f"{fmt:7s} -> {path.relative_to(REPO)}")""")
+
+md("""## Worked example: a heterostructure (PTO / STO / PTO)
+
+This section is independent of your input above. It runs the stack spec
+`examples/pto_sto_pto_demo.yaml` and writes to `runs/pto_sto_pto_demo/`.
+
+PbTiO₃ (PTO, a = 3.880 Å) and SrTiO₃ (STO, a = 3.913 Å) are both square, with a 0.85 %
+lattice mismatch, so they are never exactly commensurate. What is different from a
+homostructure:
+
+- **Two materials:** `material` and `source_poscar` follow the stacking order; the ids
+  read `pto_sto_…` and `pto_sto_pto_…`.
+- **A looser tolerance in round 1** (`dtol = 9e-3`, as in
+  `notebooks/Bi-layer_structure_finder.ipynb`); with the homostructure default 5e-4 the
+  PTO/STO pair has no match at all.
+- **Residuals compound.** The trilayer cell is a large multiple of an imperfect bilayer cell,
+  so its error against the STO layer can be much larger than the error of the last step.
+  The spec therefore filters on `max_layer_residual`, the error measured against every layer.""")
+
+code("""HETERO_SPEC = REPO / "examples" / "pto_sto_pto_demo.yaml"
+print(HETERO_SPEC.read_text())""")
+
+code("""hetero = run_stack_spec(HETERO_SPEC, base_dir=REPO, log=None)
+hetero_dir = hetero.run_dir
+print(hetero.summary())""")
+
+md("""### Round 1: the PTO / STO bilayers
+
+These are the same twists and residuals as the old bilayer notebook (`tblstopto.pkl`),
+restricted to the 28–30° window used here:""")
+
+code("""reference = pd.read_pickle(REPO / "moire_structures" / "PTO_STO" / "tblstopto.pkl")
+in_window = reference[(reference["Theta"] >= 28.0) & (reference["Theta"] < 30.0)]
+old = pd.DataFrame({"twist (deg)": in_window["Theta"].round(2), "old residual (Å)": in_window["delvec"]})
+new_bilayers = find(hetero_dir, n_layers=2)
+new = pd.DataFrame({"twist (deg)": new_bilayers["twist"].round(2), "new residual (Å)": new_bilayers["residual"],
+                    "id": new_bilayers["id"]})
+old.merge(new, on="twist (deg)", how="outer").sort_values("twist (deg)").reset_index(drop=True)""")
+
+md("""### Round 2: the trilayers, and why `max_layer_residual` matters
+
+Every trilayer found, passed or not. Compare two errors:
+- `residual`: the error of the last step, bilayer cell + layer 3. It is small, because the
+  bilayer cell is treated as perfect.
+- `max layer residual`: the error of the final cell against every layer. It includes the
+  STO mismatch inherited from round 1, multiplied up with the cell.
+
+Even `cumulative_residual` (the max over all steps) underestimates it.""")
+
+code("""all_trilayers = [get(hetero_dir, structure_id) for structure_id in find(hetero_dir, n_layers=3)["id"]]
+trilayer_table = candidate_table(all_trilayers)
+trilayer_table["passed"] = [get(hetero_dir, i).worst_layer_residual <= 5e-2 for i in trilayer_table["id"]]
+worst = np.array([r.worst_layer_residual for r in all_trilayers])
+step = np.array([r.residual for r in all_trilayers])
+cumulative = np.array([r.cumulative_residual for r in all_trilayers])
+print(f"{len(trilayer_table)} trilayer candidates, {int(trilayer_table['passed'].sum())} pass max_layer_residual <= 0.05 Å")
+print(f"max layer residual / last-step residual:   median {np.median(worst / step):.0f}x")
+print(f"max layer residual / cumulative_residual:   median {np.median(worst / cumulative):.1f}x, "
+      f"max {np.max(worst / cumulative):.1f}x")
+trilayer_table.head(10)""")
+
+md("""### The smallest trilayer that passes
+
+Rebuilt from its recipe and written as VASP and LAMMPS. The atom count of every layer
+(PTO, STO, PTO) matches (cell area / primitive area) × atoms per cell.""")
+
+code("""passing = candidate_table(hetero.final)
+hetero_choice = get(hetero_dir, passing.loc[0, "id"])
+print("id:", hetero_choice.id)
+print("materials (bottom -> top):", hetero_choice.material)
+print("absolute layer orientations (deg):", np.round(hetero_choice.layer_rotations, 3))
+print("per-layer residuals (Å):", np.round(hetero_choice.layer_residuals, 4))
+print()
+print(lineage(hetero_dir, hetero_choice.id))
+hetero_built = build_atoms(hetero_choice, search_dirs=[REPO])
+print("atoms per layer:", hetero_built.layer_counts, "(expected", hetero_built.expected_counts, ")")
+print("composition:", hetero_built.composition)
+plot_top_view(hetero_choice, hetero_built)
+for fmt in ["vasp", "lammps"]:
+    print(f"{fmt:7s} -> {write_structure(hetero_dir, hetero_choice.id, fmt=fmt).relative_to(REPO)}")""")
+
+md("""To try your own heterostructure, put two different POSCARs in `LAYERS` (section 1),
+and raise `MATCH_TOLERANCE` (advanced settings) if nothing is found.""")
 
 md("""## Coming back later
 

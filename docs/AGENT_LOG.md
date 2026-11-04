@@ -294,3 +294,14 @@ between each pair of layers.
   window per interface (1 cell, 392 atoms), and an empty result (hints, no errors).
 
 **Tests:** 81 passed.
+
+## 2026-11-04 — Heterostructure worked example in the explorer notebook
+
+Added "Worked example: a heterostructure (PTO / STO / PTO)" at the end of
+`notebooks/moire_stack_explorer.ipynb` (independent of the input cell). It runs
+`examples/pto_sto_pto_demo.yaml` with `run_stack_spec` and shows: the round-1 bilayers
+against the old `tblstopto.pkl` (28.99° 0.008259 Å, 29.74° 0.023813 Å — identical);
+the 19 trilayers with step residual vs max layer residual (median 161× the last step,
+5.0× the cumulative residual); and the smallest passing trilayer (29.74° / 7.13°, layers at
+0 / 29.74 / 36.87°, 2716 atoms, 910/896/910 per layer as expected) written as VASP and
+LAMMPS. Notebook executed, 0 errors.
