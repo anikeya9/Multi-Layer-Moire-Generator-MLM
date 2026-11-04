@@ -85,8 +85,9 @@ print(trilayer)
 print("absolute layer rotations (deg):", np.round(trilayer.layer_rotations, 4))
 print("moiré lattice vectors (Å):\\n", trilayer.lattice_vectors.round(4))""")
 
-md("""This is the recipe file itself — note `parents` (ids, not copies) and that the trilayer's
-`twist` is the rotation of layer 3 relative to the bilayer's frame (= layer 1).""")
+md("""This is the recipe file itself — note `parents` (ids, not copies). Every `twist` is
+measured from the layer directly below: the trilayer's `twist` (36.87°) is layer 3 relative
+to layer 2, and `layer_rotations` gives the absolute angles (0, 22.62, 22.62 + 36.87 = 59.49°).""")
 
 code("""print((run_dir / "yamls" / f"{best_id}.yaml").read_text())""")
 
@@ -133,8 +134,9 @@ plt.show()""")
 
 md("""## Where to go from here
 
-- Change the windows in the spec (or use `window_relative_to: lower_top_layer` with
-  `degmin: 1, degmax: 60.01` in round 2) to scan the whole landscape like the notebooks did.
+- Widen the windows in the spec (round 1: `degmin: 1, degmax: 45`; round 2: `degmin: 1,
+  degmax: 60.01`) to scan the whole landscape like the notebooks did. Because twists are
+  measured from the layer below, round 2's 1–60.01° is the notebook's θ+1 … θ+60.01 window.
 - `find(run_dir, ...)` accepts more filters: `angle_between_vectors`, `twist_range`,
   `max_cell_area`, `max_layer_residual`, `passed_filter`.
 - See `docs/IMPLEMENTATION_NOTES.md` for the full API.""")

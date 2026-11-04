@@ -243,3 +243,31 @@ spec, ~20 kB, no atom files); `python -m MLM write examples/runs/bto_trilayer_de
 
 **Still blocked:** push to `origin/claude-edits` (HTTP 403 for the whole session). A git
 bundle of the branch was produced as a fallback (see the final session message).
+
+## 2026-11-04 — Owner review of the agent-decided items
+
+The owner reviewed the decisions (DESIGN.md §8) and chose:
+- **Twist reference → measured from the layer directly below** (new decision #32). A twist
+  is now the rotation of the upper block's bottom layer relative to the lower block's top
+  layer. `match.run` is unchanged: the search sweeps the window shifted by
+  `lower.layer_rotations[-1]` and stores `twist = scan angle − shift`
+  (`search.twist_offset`). `layer_rotations` and `build.rotations_from_lineage` use
+  `lower[-1] + twist + r`. The `window_relative_to` option was removed (it is now the only
+  behaviour; round-2 window 1–60.01° = the notebooks' θ+1 … θ+60.01).
+- **Hash rounded values** (#18): floats are rounded to 8 decimals (and `-0.0` → `0.0`)
+  before hashing; ids no longer depend on the angle grid origin (new test).
+- Everything else kept: dedupe on, both residuals kept, max of the two delvecs, all four
+  added fields, label rule, #25–#31.
+
+**Effect on the reproduction**
+- `bto_22.62_36.86.vasp` now matches on **all three layers** (3e-14, 2.7e-4, 7.5e-3 Å; the
+  last is the 36.87° vs 36.86° grid step). Previously layer 3 was off by 2.29 Å.
+- The old trilayer CSV (layer 3 at 36.87° from layer 1) is now found as twist 14.25°,
+  residual 5.7472e-5 Å (unchanged); the graphene trilayer CSV as twist 0.00°.
+- Example specs re-run; `bto_5layer_demo.yaml` windows changed to round 2 = 30–31°,
+  round 3 = 35–40° (1 of 4 five-layer cells passes). Both notebooks re-executed; the
+  committed example run `examples/runs/bto_trilayer_demo` regenerated (new ids).
+- DESIGN.md (§5 example, §5.1, §6, §7, §8 #16/#18/#23/#32, §9, §10) and
+  IMPLEMENTATION_NOTES.md updated.
+
+**Tests:** 77 passed in 21 s.

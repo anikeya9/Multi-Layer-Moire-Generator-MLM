@@ -18,8 +18,8 @@ layer) and the 50 Å vacuum are the notebook's.
 
 Example
 -------
->>> write_structure("runs/bto_trilayer_demo", "bto_3_22.62_36.87_c26a56", fmt="vasp")   # doctest: +SKIP
-PosixPath('runs/bto_trilayer_demo/structures/bto_3_22.62_36.87_c26a56.vasp')
+>>> write_structure("runs/bto_trilayer_demo", "bto_3_22.62_36.87_015688", fmt="vasp")   # doctest: +SKIP
+PosixPath('runs/bto_trilayer_demo/structures/bto_3_22.62_36.87_015688.vasp')
 """
 
 from __future__ import annotations
@@ -79,17 +79,20 @@ class BuiltStructure:
 def rotations_from_lineage(run_dir: PathLike, structure_id: str) -> list[float]:
     """Absolute rotation (deg) of every layer, derived by walking the lineage.
 
-    Block-rigid rule: a root has ``[0]``; a child of (lower, upper) at ``twist`` has
-    ``rotations(lower) + [r + twist for r in rotations(upper)]``.
+    Block-rigid rule, with the twist measured from the layer directly below: a root
+    has ``[0]``; a child of (lower, upper) at ``twist`` has
+    ``rotations(lower) + [rotations(lower)[-1] + twist + r for r in rotations(upper)]``.
 
     >>> rotations_from_lineage("runs/bto_trilayer_demo", trilayer_id)   # doctest: +SKIP
-    [0.0, 22.62, 36.87]
+    [0.0, 22.62, 59.49]
     """
     def rotations(node) -> list[float]:
         if not node.parents:
             return [0.0]
         lower, upper = node.parents
-        return rotations(lower) + [angle + node.record.twist for angle in rotations(upper)]
+        lower_rotations = rotations(lower)
+        upper_base = lower_rotations[-1] + node.record.twist  # new angle of the upper block's bottom layer
+        return lower_rotations + [upper_base + angle for angle in rotations(upper)]
 
     return rotations(lineage(run_dir, structure_id))
 
@@ -225,7 +228,7 @@ def write_structure(
     ``<run_dir>/structures/<id>.vasp`` (or ``.data``).
 
     >>> write_structure("runs/bto_trilayer_demo", trilayer_id, fmt="lammps")   # doctest: +SKIP
-    PosixPath('runs/bto_trilayer_demo/structures/bto_3_22.62_36.87_c26a56.data')
+    PosixPath('runs/bto_trilayer_demo/structures/bto_3_22.62_36.87_015688.data')
     """
     if fmt not in FORMATS:
         raise ValueError(f"fmt must be one of {sorted(FORMATS)}, got {fmt!r}")

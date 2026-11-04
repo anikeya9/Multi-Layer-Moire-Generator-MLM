@@ -85,7 +85,12 @@ def test_graphene_bilayer_csv_vectors():
 
 
 def test_bto_trilayer_csv_through_tree(tmp_path):
-    """bilayer 22.62° + layer 3 vs ``bto_trilayer_candidates_22.62.csv`` (best row: 36.87°)."""
+    """bilayer 22.62° + layer 3 vs ``bto_trilayer_candidates_22.62.csv`` (best row: 36.87°).
+
+    The CSV's ``degree`` is layer 3's rotation relative to layer 1 (the old notebook
+    convention). The tree measures a twist from the layer below, so the same structure
+    is the twist 36.87 − 22.62 = 14.25°.
+    """
     from MLM.search import Filters, SearchSchedule, build_stack
 
     reference = pd.read_csv("moire_structures/bto/bto_trilayer_candidates_22.62.csv")
@@ -93,11 +98,12 @@ def test_bto_trilayer_csv_through_tree(tmp_path):
     root = MoireStructure.from_poscar(BTO, "bto")
     schedule = SearchSchedule(
         SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,)),
-        {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}},
+        {2: {"degmin": 14.0, "degmax": 14.5, "nmin": -40, "nmax": 40}},
     )
     result = build_stack([root] * 3, schedule, Filters(max_residual=1e-3), run_dir=tmp_path, log=None)
     (trilayer,) = result.final
-    assert trilayer.twist == pytest.approx(best["degree"], abs=1e-6)  # 36.87
+    assert trilayer.layer_rotations[2] == pytest.approx(best["degree"], abs=1e-6)  # 36.87 from layer 1
+    assert trilayer.twist == pytest.approx(best["degree"] - best["theta"], abs=1e-6)  # 14.25 from layer 2
     assert trilayer.residual == pytest.approx(best["vec_del"], rel=1e-6)  # 5.747e-5 Å
     old_cell = np.array([parse_vector(best["A1"]), parse_vector(best["A2"])])
     assert same_lattice(trilayer.lattice_vectors, old_cell, root.lattice_vectors)
@@ -106,8 +112,8 @@ def test_bto_trilayer_csv_through_tree(tmp_path):
 def test_graphene_trilayer_csv_through_tree(tmp_path):
     """graphene bilayer 21.79° + layer 3 vs ``graphene_trilayer_candidates_21.80.csv``.
 
-    The old CSV has layer 3 at 21.75/21.80° (i.e. aligned with layer 2) and a cell of
-    3x the bilayer moiré cell. ``match.scan`` skips coefficients with a zero component,
+    The old CSV has layer 3 at 21.75/21.80° from layer 1, i.e. aligned with layer 2
+    (a twist of 0° from the layer below), and a cell of 3x the bilayer moiré cell. ``match.scan`` skips coefficients with a zero component,
     so the bilayer cell itself (n = (1, 0), (0, 1)) can never be found; the smallest cell
     it can report is the same 3x cell.
     """
@@ -118,13 +124,14 @@ def test_graphene_trilayer_csv_through_tree(tmp_path):
     root = MoireStructure.from_poscar(GRAPHENE, "graphene")
     schedule = SearchSchedule(
         SearchParams(degmin=21.5, degmax=22.0, nmin=-10, nmax=10, goodangles=(60.0,)),
-        {2: {"degmin": 21.7, "degmax": 21.9, "nmin": -40, "nmax": 40}},
+        {2: {"degmin": -0.1, "degmax": 0.1, "nmin": -40, "nmax": 40}},
     )
     result = build_stack([root] * 3, schedule, Filters(max_residual=1e-2), run_dir=tmp_path, log=None)
     old_cell = np.array([parse_vector(best["A1"]), parse_vector(best["A2"])])
     matches = [t for t in result.final if same_lattice(t.lattice_vectors, old_cell, root.lattice_vectors)]
     assert matches, [t.twist for t in result.final]
-    assert min(abs(t.twist - 21.79) for t in matches) < 0.011
+    assert min(abs(t.twist) for t in matches) < 0.011
+    assert min(abs(t.layer_rotations[2] - 21.79) for t in matches) < 0.011
 
 
 # ---------------------------------------------------------------------------
@@ -200,17 +207,15 @@ def test_bilayer_structure_matches_old_vasp(tmp_path, poscar, label, reference):
 
 
 def test_trilayer_structure_matches_old_vasp(tmp_path):
-    """``bto_22.62_36.86.vasp``: same atoms count, composition and lattice.
+    """``bto_22.62_36.86.vasp``: bilayer 22.62° + layer 3 twisted by ~36.87° from layer 2.
 
-    Layers 1 and 2 match atom by atom. Layer 3 does **not**: in the old file it is
-    rotated by 22.62 + 36.86 = 59.48° (the old writer applied φ relative to layer 2,
-    and at the 36.86° grid point), whereas the trilayer notebook and the new tree
-    use φ as the rotation relative to layer 1 (36.87°). Rebuilding with the old
-    rotation reproduces layer 3 within 0.02 Å.
+    The old file has layer 3 at 22.62 + 36.86 = 59.48°, i.e. φ measured from the layer
+    below — the convention the tree uses. The search finds the best grid twist 36.87°
+    (layer 3 at 59.49°), so all three layers match; layer 3 differs by the 0.01° grid
+    step (up to ~0.01 Å at the cell corners).
     """
     from ase.io import read
 
-    from MLM.build import build_atoms
     from MLM.index import find, get
     from MLM.search import SearchSchedule
 
@@ -222,15 +227,7 @@ def test_trilayer_structure_matches_old_vasp(tmp_path):
     assert new.get_chemical_formula() == ref.get_chemical_formula()
     root = MoireStructure.from_poscar(BTO, "bto")
     assert same_lattice(new.cell.array[:2, :2], ref.cell.array[:2, :2], root.lattice_vectors)
-    layer1, layer2, layer3 = max_in_plane_displacement(new, ref, 3)
-    assert layer1 < 1e-6 and layer2 < 5e-4
-    assert layer3 > 1.0  # different (physically distinct) orientation of layer 3
-
     record = get(tmp_path, find(tmp_path, n_layers=3)["id"].iloc[0])
-    old_convention = build_atoms(record, rotations=[0.0, record.layer_rotations[1], 22.62 + 36.86],
-                                 fold_tolerance=6e-3)
-    from ase import Atoms
-
-    rebuilt = Atoms(symbols=old_convention.atoms["type"].tolist(),
-                    positions=old_convention.atoms[["x", "y", "z"]].to_numpy(), cell=old_convention.cell, pbc=True)
-    assert max(max_in_plane_displacement(rebuilt, ref, 3)) < 0.02
+    assert record.layer_rotations == pytest.approx([0.0, 22.62, 59.49], abs=1e-6)
+    layer1, layer2, layer3 = max_in_plane_displacement(new, ref, 3)
+    assert layer1 < 1e-6 and layer2 < 5e-4 and layer3 < 0.02

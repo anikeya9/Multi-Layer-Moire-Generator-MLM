@@ -1,0 +1,25 @@
+id: bto_3_22.62_35.30_4f0401
+level: 2
+n_layers: 3
+material: [bto, bto, bto]
+parents: [bto_2_22.62_1fdb6f, bto_1_406932]
+twist: 35.29999999999994
+lattice_vectors:
+- [-319.23032760800004, 91.7787191873]
+- [-91.7787191873, -319.23032760800004]
+angle_between_vectors: 90.0
+residual: 0.0006573452334772444
+cumulative_residual: 0.0006573452334772444
+source_poscar: [moire_structures/bto/bto_1-layer.vasp, moire_structures/bto/bto_1-layer.vasp,
+  moire_structures/bto/bto_1-layer.vasp]
+units: angstrom
+twist_sequence: [22.62000000000041, 35.29999999999994]
+layer_rotations: [0.0, 22.62000000000041, 57.92000000000035]
+layer_residuals: [0.0, 0.0007829385843768171, 0.0006573452334772444]
+coefficients:
+  lower:
+  - [22, 7]
+  - [-7, 22]
+  upper:
+  - [-23, 80]
+  - [-80, -23]

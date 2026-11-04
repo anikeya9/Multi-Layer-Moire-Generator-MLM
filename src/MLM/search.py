@@ -38,10 +38,6 @@ from MLM.structure import MoireStructure, PathLike, read_primitive
 # 1. Parameters and filters
 # ===========================================================================
 
-#: Allowed values of ``SearchParams.window_relative_to``.
-WINDOW_MODES = ("frame", "lower_top_layer")
-
-
 @dataclass(frozen=True)
 class SearchParams:
     """Parameters of one pairwise search (one call of ``match.run_and_filter``).
@@ -49,7 +45,9 @@ class SearchParams:
     The first seven fields are passed straight to ``run_and_filter``:
 
     - ``degmin``, ``degmax``, ``degstep`` — twist sweep in degrees (``degmax`` excluded,
-      as in ``np.arange``).
+      as in ``np.arange``). The twist is the rotation of the upper block's bottom layer
+      relative to the lower block's **top** layer (the layer directly below it); see
+      :meth:`window_for` for how this becomes the absolute angle ``match.run`` sweeps.
     - ``dtol`` — tolerance on the *fractional* coordinates of a match (``match.scan``'s
       ``tol``); the Å residual of each match is reported separately as ``delvec``.
     - ``nmin``, ``nmax`` — range of integer coefficients searched on the lower lattice.
@@ -57,10 +55,6 @@ class SearchParams:
 
     The remaining fields control how the raw matches are post-processed here:
 
-    - ``window_relative_to`` — ``"frame"`` (default): the window is the twist of the
-      upper block relative to the lower block's frame. ``"lower_top_layer"``: the
-      window is shifted by the absolute rotation of the lower block's top layer,
-      which reproduces the trilayer notebook (``degmin = degree + 1``).
     - ``dedupe`` — merge matches that describe the same cell (see :func:`deduplicate`).
     - ``keep_supercells`` — keep non-minimal cells (integer multiples) found at the
       same twist. ``False`` keeps only the smallest cell, like the notebooks did.
@@ -79,7 +73,6 @@ class SearchParams:
     nmin: int = -10
     nmax: int = 10
     goodangles: tuple[float, ...] = (90.0,)
-    window_relative_to: str = "frame"
     dedupe: bool = True
     keep_supercells: bool = False
     angle_cluster_tol: Optional[float] = None
@@ -87,8 +80,6 @@ class SearchParams:
     def __post_init__(self) -> None:
         # Accept lists from YAML but store an (immutable, hashable) tuple.
         object.__setattr__(self, "goodangles", tuple(float(a) for a in self.goodangles))
-        if self.window_relative_to not in WINDOW_MODES:
-            raise ValueError(f"window_relative_to must be one of {WINDOW_MODES}, got {self.window_relative_to!r}")
         if self.degmax <= self.degmin or self.degstep <= 0:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
         if self.nmax <= self.nmin:
@@ -102,16 +93,20 @@ class SearchParams:
         return self.angle_cluster_tol
 
     def window_for(self, lower: MoireStructure) -> tuple[float, float]:
-        """The (degmin, degmax) actually swept when ``lower`` is the lower block.
+        """The absolute (degmin, degmax) that ``match.run`` sweeps for this ``lower`` block.
 
-        >>> params = SearchParams(degmin=1.0, degmax=60.01, window_relative_to="lower_top_layer")
-        >>> params.window_for(bilayer_at_22_62)   # doctest: +SKIP
-        (23.62, 82.63)
+        ``match.scan`` rotates the upper lattice relative to the lower block's *frame*
+        (its bottom layer). Twists are defined relative to the lower block's *top* layer,
+        so the window is shifted by that layer's rotation, :func:`twist_offset`.
+        For a monolayer the shift is 0; for a 22.62° bilayer a twist window of
+        1–60.01° is swept as 23.62–82.63°, which is the window of
+        ``trilayer_candidate_finder.ipynb`` (``degmin = degree + 1``).
+
+        >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
+        >>> SearchParams(degmin=1.0, degmax=60.01).window_for(root)
+        (1.0, 60.01)
         """
-        if self.window_relative_to == "frame":
-            return self.degmin, self.degmax
-        # The notebook used np.round(theta, 3) of the bilayer twist as offset.
-        offset = round(lower.layer_rotations[-1], 3)
+        offset = twist_offset(lower)
         return self.degmin + offset, self.degmax + offset
 
     def estimated_cost(self) -> int:
@@ -220,12 +215,24 @@ def _row_to_parts(row: dict[str, Any]) -> tuple[np.ndarray, list[int], list[int]
     return vector, [int(row["n1"]), int(row["n2"])], [int(row["m1"]), int(row["m2"])], float(row["delvec"])
 
 
-def cell_from_pair(row_a: dict[str, Any], row_b: dict[str, Any], goodangle: float) -> CellMatch:
+def twist_offset(lower: MoireStructure) -> float:
+    """Rotation (deg) of ``lower``'s top layer in ``lower``'s frame.
+
+    ``absolute scan angle = twist_offset(lower) + twist``: the twist of the upper
+    block is measured from the layer directly below it.
+    """
+    return float(lower.layer_rotations[-1])
+
+
+def cell_from_pair(
+    row_a: dict[str, Any], row_b: dict[str, Any], goodangle: float, offset: float = 0.0
+) -> CellMatch:
     """Convert one ``filtermatches`` pair into a right-handed :class:`CellMatch`.
 
     ``match.filtermatches`` returns both (a, b) and (b, a); swapping to make
     ``a1 x a2 > 0`` maps both orderings onto the same right-handed cell, which is
-    also what VASP prefers.
+    also what VASP prefers. ``offset`` (see :func:`twist_offset`) is subtracted from
+    the scan angle so that ``CellMatch.twist`` is relative to the layer below.
     """
     v1, n1, m1, d1 = _row_to_parts(row_a)
     v2, n2, m2, d2 = _row_to_parts(row_b)
@@ -233,7 +240,7 @@ def cell_from_pair(row_a: dict[str, Any], row_b: dict[str, Any], goodangle: floa
     if cross < 0:
         v1, v2, n1, n2, m1, m2 = v2, v1, n2, n1, m2, m1
     return CellMatch(
-        twist=float(row_a["angle"]),
+        twist=float(row_a["angle"]) - offset,
         goodangle=float(goodangle),
         vectors=np.array([v1, v2]),
         lower_coeffs=np.array([n1, n2], dtype=int),
@@ -242,12 +249,12 @@ def cell_from_pair(row_a: dict[str, Any], row_b: dict[str, Any], goodangle: floa
     )
 
 
-def cells_from_run(results: list[dict[str, Any]]) -> list[CellMatch]:
+def cells_from_run(results: list[dict[str, Any]], offset: float = 0.0) -> list[CellMatch]:
     """Flatten the output of ``match.run_and_filter`` into :class:`CellMatch` objects."""
     cells = []
     for block in results:
         for row_a, row_b, _extra in block["results"]:
-            cells.append(cell_from_pair(row_a, row_b, block["goodangle"]))
+            cells.append(cell_from_pair(row_a, row_b, block["goodangle"], offset))
     return cells
 
 
@@ -401,10 +408,12 @@ def record_from_cell(
 ) -> MoireStructure:
     """Build the child record for ``lower`` + ``upper`` combined at ``cell``.
 
-    Lists are concatenated lower-first; the upper block's layer rotations are
-    shifted by the twist (block-rigid rotation).
+    Lists are concatenated lower-first. The upper block is rotated as a rigid unit:
+    its bottom layer ends up at (rotation of the lower block's top layer + twist),
+    and its other layers keep their rotations relative to that bottom layer.
     """
-    rotations = list(lower.layer_rotations) + [rotation + cell.twist for rotation in upper.layer_rotations]
+    upper_base = twist_offset(lower) + cell.twist
+    rotations = list(lower.layer_rotations) + [upper_base + rotation for rotation in upper.layer_rotations]
     poscars = list(lower.source_poscar) + list(upper.source_poscar)
     n_layers = lower.n_layers + upper.n_layers
     return MoireStructure(
@@ -452,7 +461,7 @@ def find_candidates(
         dtol=params.dtol, nmin=params.nmin, nmax=params.nmax,
         goodangles=list(params.goodangles),
     )
-    cells = cells_from_run(results)
+    cells = cells_from_run(results, offset=twist_offset(lower))
     if params.dedupe and cells:
         cells = deduplicate(cells, params.keep_supercells, params.cluster_tol)
     return [record_from_cell(lower, upper, cell, search_dirs) for cell in cells]
@@ -468,7 +477,8 @@ def search_pair(
     """Commensurate cells of ``lower`` + twisted ``upper`` that pass ``filters``.
 
     This is the atomic operation of the whole N-layer search. ``upper`` is rotated
-    rigidly by the swept twist relative to ``lower``'s frame. Each returned record
+    rigidly by the swept twist, measured from ``lower``'s top layer (the layer
+    directly below ``upper``'s bottom layer). Each returned record
     has ``parents = [lower.id, upper.id]``.
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")

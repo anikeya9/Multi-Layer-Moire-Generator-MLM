@@ -117,7 +117,8 @@ def test_trilayer_tree(trilayer_run):
     assert trilayer.twist == pytest.approx(36.87, abs=1e-6)
     bilayer_id, upper_id = trilayer.parents
     assert upper_id == root.id  # layer 3 was carried forward unchanged
-    assert trilayer.layer_rotations == pytest.approx([0.0, 22.62, 36.87])
+    # Twist is measured from the layer below: layer 3 sits at 22.62 + 36.87.
+    assert trilayer.layer_rotations == pytest.approx([0.0, 22.62, 59.49])
     assert trilayer.twist_sequence == pytest.approx([22.62, 36.87])
     assert trilayer.id.startswith("bto_3_22.62_36.87_")
     tree = lineage(result.run_dir, trilayer.id)
@@ -159,5 +160,6 @@ def test_four_layers_combine_two_bilayers(tmp_path):
     four = result.final[0]
     # Both round-1 pairs give the identical bilayer recipe -> parents are the same id.
     assert four.parents[0] == four.parents[1]
-    assert four.layer_rotations == pytest.approx([0.0, 22.62, four.twist, four.twist + 22.62])
+    # The upper bilayer is rotated as a block, its bottom layer by `twist` from layer 2.
+    assert four.layer_rotations == pytest.approx([0.0, 22.62, 22.62 + four.twist, 22.62 + four.twist + 22.62])
     assert four.twist_sequence == pytest.approx([22.62, 22.62, four.twist])

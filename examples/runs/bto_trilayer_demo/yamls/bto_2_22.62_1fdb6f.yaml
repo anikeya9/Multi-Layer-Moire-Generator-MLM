@@ -1,8 +1,8 @@
-id: bto_2_22.62_f4f0dc
+id: bto_2_22.62_1fdb6f
 level: 1
 n_layers: 2
 material: [bto, bto]
-parents: [bto_1_65687f, bto_1_65687f]
+parents: [bto_1_406932, bto_1_406932]
 twist: 22.62000000000041
 lattice_vectors:
 - [-11.971137285300001, 7.9807581902]

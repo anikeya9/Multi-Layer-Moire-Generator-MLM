@@ -70,6 +70,10 @@ SCHEMA_KEYS: tuple[str, ...] = (
 #: Number of hex characters of the sha1 hash used in the id.
 HASH_LENGTH = 6
 
+#: Floats are rounded to this many decimals (1e-8 Å / 1e-8 degree) before hashing,
+#: so that floating-point noise from the angle grid does not change the id.
+HASH_DECIMALS = 8
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -95,6 +99,24 @@ def _to_builtin(value: Any) -> Any:
         return int(value)
     if isinstance(value, np.floating):
         return float(value)
+    return value
+
+
+def _rounded_for_hash(value: Any) -> Any:
+    """Round every float in a nested dict/list to :data:`HASH_DECIMALS` decimals.
+
+    ``+ 0.0`` turns ``-0.0`` into ``0.0`` so that a tiny negative noise value and a tiny
+    positive one hash the same.
+
+    >>> _rounded_for_hash({"twist": 22.620000000000097, "r": [-1e-15, 3.39128345e-05]})
+    {'twist': 22.62, 'r': [0.0, 3.391e-05]}
+    """
+    if isinstance(value, dict):
+        return {key: _rounded_for_hash(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_rounded_for_hash(item) for item in value]
+    if isinstance(value, float):
+        return round(value, HASH_DECIMALS) + 0.0
     return value
 
 
@@ -288,7 +310,7 @@ class MoireStructure:
     def from_yaml(cls, path: PathLike) -> "MoireStructure":
         """Read a record from a YAML recipe (``yaml.safe_load`` only).
 
-        >>> record = MoireStructure.from_yaml("runs/demo/yamls/bto_1_51c2d7.yaml")  # doctest: +SKIP
+        >>> record = MoireStructure.from_yaml("runs/demo/yamls/bto_1_406932.yaml")  # doctest: +SKIP
         """
         with open(path, "r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle)
@@ -337,11 +359,17 @@ class MoireStructure:
     def content_hash(self) -> str:
         """sha1 (first :data:`HASH_LENGTH` hex chars) over the canonical record.
 
-        "Canonical" = every field except ``id``, serialised as JSON with sorted
-        keys. Two records with identical content therefore get the same id, and
-        two matches that only differ beyond the 2nd decimal of the twist do not.
+        "Canonical" = every field except ``id``, with every float rounded to
+        :data:`HASH_DECIMALS` decimals, serialised as JSON with sorted keys.
+
+        - Two records with identical content get the same id, and two matches that
+          only differ beyond the 2nd decimal of the twist (the filename) do not.
+        - Rounding makes the id independent of floating-point noise: the same cell
+          found with ``np.arange(1, 45, 0.01)`` (twist 22.620000000000097) and with
+          ``np.arange(22, 23, 0.01)`` (22.62000000000041) gets the same id.
+          The YAML file itself keeps full precision.
         """
-        content = self.to_dict()
+        content = _rounded_for_hash(self.to_dict())
         content.pop("id")
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:HASH_LENGTH]
@@ -353,7 +381,7 @@ class MoireStructure:
         and never parse it.
 
         >>> MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto").make_id()  # doctest: +SKIP
-        'bto_1_3f2a9c'
+        'bto_1_406932'
         """
         parts = [material_label(self.material), str(self.n_layers)]
         parts += [f"{angle:.2f}" for angle in self.twist_sequence]

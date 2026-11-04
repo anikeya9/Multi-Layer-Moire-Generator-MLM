@@ -27,7 +27,7 @@ src/MLM/
   spec.py        stack-spec loader, run_stack_spec
   build.py       atoms from a recipe's lineage, write_structure (VASP / LAMMPS)
   cli.py         python -m MLM run | find | show | write   (+ __main__.py)
-tests/           76 tests, ~35 s
+tests/           77 tests, ~35 s
 examples/        stack specs + one tiny committed run (examples/runs/bto_trilayer_demo)
 dev/             demo notebooks (+ the scripts that generate them), YAML-vs-index benchmark
 ```
@@ -122,10 +122,10 @@ python -m MLM run examples/bto_trilayer_demo.yaml
 python -m MLM find runs/bto_trilayer_demo --n-layers 3 --passed yes
 ```
 ```bash
-python -m MLM show runs/bto_trilayer_demo bto_3_22.62_36.87_c35ae7
+python -m MLM show runs/bto_trilayer_demo bto_3_22.62_36.87_015688
 ```
 ```bash
-python -m MLM write runs/bto_trilayer_demo bto_3_22.62_36.87_c35ae7 --fmt lammps
+python -m MLM write runs/bto_trilayer_demo bto_3_22.62_36.87_015688 --fmt lammps
 ```
 
 ---
@@ -158,15 +158,17 @@ Take the BTO trilayer job `examples/bto_trilayer_demo.yaml`.
 5. **Cells → records.** `record_from_cell` builds the child: `parents = [lower.id,
    upper.id]`, lists concatenated lower-first, `twist`, the moiré `lattice_vectors`,
    `residual` (Å), `cumulative_residual = max(residual, parents')`, `layer_rotations`
-   (upper block rotated rigidly by `twist`), `layer_residuals` (true error per layer).
+   (upper block rotated rigidly by `twist`, measured from the layer below), `layer_residuals`
+   (true error per layer).
 
 6. **Store everything.** `build_stack` passes each candidate to `Filters.passes`, writes
    **every** candidate with `RunStore.add` (YAML in `yamls/`, a row in memory), and
    rewrites `index.csv` after each step. Passing candidates go to the next round.
 
 7. **Round 2.** The bilayer's moiré cell is now the lower "lattice" and layer 3's primitive
-   cell the upper one; the same `find_candidates` runs again. Number of searches =
-   (bilayer candidates) × 1.
+   cell the upper one; the same `find_candidates` runs again. The twist window is measured
+   from layer 2, so `match.run` sweeps it shifted by the bilayer's 22.62° and the stored
+   `twist` is the scan angle minus 22.62°. Number of searches = (bilayer candidates) × 1.
 
 8. **Jump to a structure.** `find` filters `index.csv` (no YAML parsing), `get` opens one
    recipe via the index's `path` column (and checks the stored `id`), `lineage` follows
@@ -183,7 +185,7 @@ Take the BTO trilayer job `examples/bto_trilayer_demo.yaml`.
 
 ## 4. Tests and reproduction results
 
-`python -m pytest` → **76 passed in ~35 s** (no xfails). `-m "not slow"` skips the one 7 s
+`python -m pytest` → **77 passed in ~35 s** (no xfails). `-m "not slow"` skips the one 7 s
 full-window bilayer test.
 
 | file | covers |
@@ -206,8 +208,11 @@ full-window bilayer test.
 | BTO bilayer 22.62° | 22–23° | CSV: 22.62°, n = (3,−2),(−2,−3), vec_del 3.391e-5 Å | 22.62°, same lattice, **3.391e-5 Å**; cell identical to `moire_strs_vasp/bto_22.62.vasp` |
 | graphene bilayer | 21.5–22°, 60° | CSV: 21.80°, 1.51e-3 Å (0.05° grid) | 21.79°, same lattice, 3.66e-4 Å |
 | PTO/STO bilayer | 1–45°, dtol 9e-3, n ±10 | `tblstopto.pkl`: 7.13, 17.74, 28.99, 29.74, 35.02, 40.36° | **same 6 twists and residuals** (0.0238 … 0.0081 Å) |
-| BTO trilayer (22.62° + L3) | round 2: 36.5–37.5°, n ±40 | CSV: 36.87°, vec_del 5.7472e-5 Å | **36.87°, 5.7472e-5 Å**, same lattice, 65 primitive cells |
-| graphene trilayer (21.79° + L3) | round 2: 21.7–21.9°, n ±40 | CSV: 21.80°, 3× bilayer cell, 2.6e-3 Å | 21.79°, same 3× cell, 6.3e-4 Å |
+| BTO trilayer (22.62° + L3) | round 2: twist 14.0–14.5°, n ±40 | CSV: L3 at 36.87° from L1, vec_del 5.7472e-5 Å | twist **14.25°** (L3 at **36.87°** from L1), **5.7472e-5 Å**, same lattice, 65 primitive cells |
+| graphene trilayer (21.79° + L3) | round 2: twist −0.1–0.1°, n ±40 | CSV: L3 at 21.80° from L1, 3× bilayer cell, 2.6e-3 Å | twist 0.00° (L3 at 21.79°), same 3× cell, 6.3e-4 Å |
+
+The old CSVs give layer 3's angle from layer 1 (`degree`); the tree stores the twist from the
+layer below (§6, decision 1), so the CSV row is `twist = degree − theta`.
 
 Why the graphene numbers differ slightly: the CSVs came from the older O(N⁴) finder on a
 0.05° grid with an absolute residual criterion; `match.py` scans a 0.01° grid, so the new
@@ -219,20 +224,20 @@ best grid point is closer to the exact commensurate angle.
 |---|---|---|---|---|
 | BTO bilayer 22.62° (from `bto_2-layer.vasp`) vs `moire_strs_vasp/bto_22.62.vasp` | 312 / 312 | Ba78 O182 Ti52 | identical | 6.8e-6, 1.1e-4 Å |
 | STO bilayer 22.62° vs `STO_moire_cubic/sto_cubic_22.62.vasp` | 182 / 182 | O104 Sr52 Ti26 | identical | 6.6e-6, 1.1e-4 Å |
-| BTO trilayer vs `bto_22.62_36.86.vasp` | 1365 / 1365 | Ba390 O780 Ti195 | same lattice, different basis | 3e-14, 2.7e-4, **2.29 Å** |
+| BTO trilayer, twist 36.87° from layer 2, vs `bto_22.62_36.86.vasp` | 1365 / 1365 | Ba390 O780 Ti195 | same lattice, different basis | 3e-14, 2.7e-4, 7.5e-3 Å |
 
 (1e-4 Å is the 5-decimal precision of the old files.) z positions are not compared: the
 old files used other interlayer offsets than the notebooks' "3 Å above the top atom"
 rule, which `build_atoms` follows.
 
-**The trilayer's layer 3 is a real difference, not a bug.** In `bto_22.62_36.86.vasp`
-layer 3 is rotated by 22.62 + 36.86 = 59.48° (φ applied relative to layer 2, at the 36.86°
-grid point). In `trilayer_candidate_finder.ipynb` / `trilayer_structure_creator.ipynb`, and
-therefore in the new tree, φ is the rotation of layer 3 relative to layer 1 (36.87°). Both
-are commensurate with the same cell (layer error 5.7e-5 Å at 36.87°, 5.5e-3 Å at 59.48°).
-Rebuilding the new cell with the old rotation reproduces all three layers within 0.017 Å
-(asserted in `test_trilayer_structure_matches_old_vasp`). **Please check which convention
-the old file was meant to have.**
+**Trilayer and the twist convention.** In `bto_22.62_36.86.vasp` layer 3 is rotated by
+22.62 + 36.86 = 59.48°, i.e. the second angle is measured from layer 2 — the convention the
+owner chose for the tree (§6, decision 1). The tree finds the best grid twist 36.87° (layer 3
+at 59.49°, layer error 1.3e-4 Å), and all three layers match the old file; layer 3's 7.5e-3 Å
+is the 0.01° difference between the two grid points at the cell corners (asserted in
+`test_trilayer_structure_matches_old_vasp`). Before the owner's review the tree measured the
+twist from layer 1, as `trilayer_candidate_finder.ipynb` does; that structure is now the twist
+14.25° (layer 3 at 36.87°), which is what the old trilayer CSV contains.
 
 ### 4.3 Timings
 
@@ -268,23 +273,16 @@ slower than one CSV; it was not used because the design mandates `yaml.safe_load
 
 ## 5. What failed, was skipped, or behaves unexpectedly
 
-- **Pushing failed for the whole session.** `git push` returns HTTP 403 ("Claude doesn't
-  have GitHub access to anikeya9/Multi-Layer-Moire-Generator-MLM for your organization"),
-  and the GitHub connector cannot create branches either (403 "Resource not accessible by
-  integration"). All work is committed **locally** on `claude-edits`; see the final
-  message for how to recover it.
-- **The trilayer `.vasp` layer-3 orientation** differs from the old file (§4.2).
+- **Pushing failed during the unattended session** (HTTP 403, GitHub access not
+  connected). It works since the owner reconnected GitHub; the branch is on `origin`.
 - **`match.scan` skips coefficients with a zero component** and keeps only the 25 shortest
   matches per angle. In round 2+ a cell equal to the lower block's cell (n = (1,0),(0,1))
   can therefore never be found (graphene trilayer: the smallest cell found is 3× the
   bilayer cell). `match.py` was not modified, so this stays.
-- **`cumulative_residual` (max rule) underestimates.** BTO trilayer: 5.7e-5 vs 7.6e-5 Å
-  true; PTO/STO/PTO: true error typically 5× larger (0.02–0.3 Å). Use
-  `max_layer_residual` (index column and filter) for quality decisions.
-- **Ids depend on the angle grid origin.** The hash covers full-precision floats, and
-  `np.arange(1, 45, 0.01)` and `np.arange(22, 23, 0.01)` give 22.620000000000097 vs
-  22.62000000000041, so the same physical cell found in two runs can get different hashes.
-  Within one run ids are unique and deterministic.
+- **`cumulative_residual` (max rule) underestimates.** BTO trilayer at twist 14.25°: 5.7e-5
+  vs 7.6e-5 Å true; PTO/STO/PTO: true error typically 5× larger (0.02–0.3 Å). Both are kept;
+  each stack spec chooses whether to filter on `max_cumulative_residual` and/or
+  `max_layer_residual` (owner decision, §6).
 - `read_vasp` ignores the POSCAR scale factor (line 2) and needs Cartesian coordinates;
   all repository POSCARs satisfy this. `MoireStructure.from_poscar` refuses cells whose
   a, b are not in-plane.
@@ -295,28 +293,20 @@ slower than one CSV; it was not used because the design mandates `yaml.safe_load
 
 ---
 
-## 6. Agent-decided items (review these)
+## 6. Agent-decided items and the owner's review (2026-11-04)
 
-Full list with reasoning in `docs/DESIGN.md` §8 (#14–#31). The ones that matter most:
+Full list with reasoning in `docs/DESIGN.md` §8 (#14–#32).
 
-1. **De-duplication is on by default** (#21). Without it every cell appears dozens of
-   times and round 2 explodes (94 "candidates" for one BTO angle). Only equivalent
-   descriptions are merged (same lattice, supercells at the same twist, neighbouring grid
-   angles), but it *is* a judgement call: `dedupe: false` / `keep_supercells: true` turn it off.
-2. **`twist` of the upper block is relative to the lower block's frame**, i.e. the
-   trilayer's twist is the notebook's φ (relative to layer 1), not relative to layer 2
-   (§4.2 shows the old `.vasp` file used the other convention).
-3. **Added fields** `twist_sequence`, `layer_rotations`, `layer_residuals`,
-   `coefficients` (#14–#17), plus the filter `max_layer_residual`.
-4. **Step residual = max(delvec of a1, a2)** (#20).
-5. **Id = `<material>_<n>_<angles>_<sha1[:6] of all fields except id>`**; a homostructure
-   collapses to one label, a heterostructure joins all labels (`pto_sto_pto`) (#18, #19).
-6. **Paths are stored as written** and resolved against `base_dir` / cwd at search time and
-   against the run directory's ancestors at build time (#25).
-7. **Fold tolerance = max(layer_residuals)** and a minimal replication patch (#26, #27).
-8. `window_relative_to: lower_top_layer` reproduces the notebook's `degmin = θ + 1`
-   window; the default `frame` uses the window as a plain relative twist (#23).
-9. Index: one row per id; `round` is the first round that produced it (#28).
+| # | Item | Outcome |
+|---|---|---|
+| 1 | Twist reference (#32) | **Changed:** a twist is measured from the layer directly below (the lower block's top layer). `layer_rotations` gives absolute angles; round-2 window 1–60.01° = the notebooks' θ+1 … θ+60.01. The `window_relative_to` option was removed (#23). |
+| 2 | De-duplication on by default (#21) | Kept. `dedupe: false` / `keep_supercells: true` turn it off. |
+| 3 | `cumulative_residual` vs `layer_residuals` (#16) | Kept both; each run chooses which to filter on. |
+| 4 | Step residual = max(delvec of a1, a2) (#20) | Kept. |
+| 5 | Added fields `twist_sequence`, `layer_rotations`, `layer_residuals`, `coefficients` (#14–#17) | Kept all four. |
+| 6 | Hash input (#18) | **Changed:** floats are rounded to 8 decimals before hashing, so ids are the same across runs with different angle grids. |
+| 7 | Label rule (#19): homostructure collapses, heterostructure joins all labels | Kept. |
+| 8–15 | Paths, fold tolerance, replication patch, stacking rule, right-handed cells, index rows, `max_candidates` hook (#25–#31) | Kept. |
 
 ---
 
@@ -327,11 +317,8 @@ zero, a top-K beam cap (`max_candidates` raises `NotImplementedError`), tuning p
 parameters, the final naming scheme.
 
 Suggested next steps:
-- Decide whether filters should default to `max_layer_residual` rather than
-  `max_residual` / `cumulative_residual`.
 - Parallelise the `lower × upper` searches of a step (`concurrent.futures`): they are
   independent, and the round-2 sweeps dominate the run time.
-- Stable ids across runs: hash rounded values (e.g. twist to 1e-8°) instead of raw floats.
 - Allow `n1 = 0` / `n2 = 0` coefficients in a copy of `scan` if the owner wants
   "the lower cell itself" as a candidate in later rounds.
 - Store the interlayer gap / vacuum used for a written structure next to the file.

@@ -75,12 +75,27 @@ def test_filters_drop_but_do_not_change_candidates(bto_bilayers):
     assert Filters(max_layer_residual=1e-4, max_length_mismatch=0.1).passes(bilayer)
 
 
-def test_window_relative_to_lower_top_layer(bto_bilayers):
+def test_twist_is_measured_from_the_layer_below(bto_bilayers):
+    """The window and the stored twist are relative to the lower block's top layer."""
     root, (bilayer,) = bto_bilayers
-    params = SearchParams(degmin=1.0, degmax=60.01, window_relative_to="lower_top_layer")
+    params = SearchParams(degmin=1.0, degmax=60.01)
     assert params.window_for(root) == (1.0, 60.01)
-    low, high = params.window_for(bilayer)
+    low, high = params.window_for(bilayer)  # the trilayer notebook's window
     assert low == pytest.approx(23.62) and high == pytest.approx(82.63)
+    trilayers = find_candidates(bilayer, root, SearchParams(degmin=14.0, degmax=14.5, nmin=-40, nmax=40))
+    (trilayer,) = trilayers
+    assert trilayer.twist == pytest.approx(14.25, abs=1e-6)
+    assert trilayer.layer_rotations == pytest.approx([0.0, 22.62, 36.87], abs=1e-6)
+
+
+def test_id_is_independent_of_the_angle_grid(bto_bilayers):
+    """Decision #6: floats are rounded before hashing, so grid noise does not change ids."""
+    root, (narrow,) = bto_bilayers  # found with np.arange(22, 23, 0.01)
+    wide = [c for c in find_candidates(root, root, SearchParams(degmin=1.0, degmax=45.0))
+            if abs(c.twist - 22.62) < 1e-6]
+    assert len(wide) == 1
+    assert wide[0].twist != narrow.twist  # the raw floats differ in the last digits ...
+    assert wide[0].id == narrow.id       # ... but the id does not
 
 
 def test_dedupe_off_returns_raw_pairs():

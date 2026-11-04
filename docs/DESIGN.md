@@ -4,7 +4,7 @@
 multilayer 2D materials.
 **Status:** living document. Captures the design of the YAML-driven, multi-layer
 search/storage workflow.
-**Last updated:** 2026-11-03 (branch `claude-edits`; implementation of §5–§9 — see
+**Last updated:** 2026-11-04 (branch `claude-edits`; implementation of §5–§9 plus the owner's review of §8 — see
 `docs/IMPLEMENTATION_NOTES.md`).
 
 ---
@@ -144,13 +144,13 @@ field does not apply at that level. A single shape means the loader never has to
 branch on level to know which keys exist.
 
 ```yaml
-id: bto_3_22.62_36.87_c35ae7   # unique; matches filename stem
+id: bto_3_22.62_36.87_015688   # unique; matches filename stem
 level: 2                       # 0 = root/monolayer, 1 = bilayer, ...
 n_layers: 3                    # = level + 1 (stored explicitly for readability)
 material: [bto, bto, bto]      # list of material labels, one per layer
 
-parents: [bto_2_22.62_f4f0dc, bto_1_65687f]  # [lower, upper] parent ids; [] at level 0
-twist: 36.87                   # upper block's rotation vs the lower block's frame (deg); null at level 0
+parents: [bto_2_22.62_1fdb6f, bto_1_406932]  # [lower, upper] parent ids; [] at level 0
+twist: 36.87                   # upper block vs the layer directly below it (deg); null at level 0
 
 lattice_vectors:               # uniform key at every level (a1, a2 as rows)
   - [1.2336, -2.1367]
@@ -166,11 +166,11 @@ source_poscar:                 # always a list, one entry per primitive layer
 units: angstrom
 # --- added fields (§5.1) ---
 twist_sequence: [22.62, 36.87]           # twists along the lineage (post-order); [] at level 0
-layer_rotations: [0.0, 22.62, 36.87]     # absolute rotation of each layer in this frame (deg)
-layer_residuals: [1.8e-15, 7.6e-05, 5.7e-05]  # true error of this cell vs each layer (Å); null at level 0
+layer_rotations: [0.0, 22.62, 59.49]     # absolute rotation of each layer in this frame (deg): 22.62 + 36.87
+layer_residuals: [1.8e-15, 7.6e-05, 1.3e-04]  # true error of this cell vs each layer (Å); null at level 0
 coefficients:                            # integer coordinates of a1, a2; null at level 0
   lower: [[1, 2], [-2, 1]]               #   in the lower parent's lattice
-  upper: [[-8, 1], [-1, -8]]             #   in the (rotated) upper parent's lattice
+  upper: [[-7, 4], [-4, -7]]             #   in the (rotated) upper parent's lattice
 ```
 
 ### Field semantics by level
@@ -178,7 +178,7 @@ coefficients:                            # integer coordinates of a1, a2; null a
 | Field | Level 0 (root) | Level ≥ 1 |
 |---|---|---|
 | `parents` | `[]` | list of parent ids |
-| `twist` | `null` | rotation of the upper parent (as a rigid block) vs the lower parent's frame |
+| `twist` | `null` | rotation of the upper parent (as a rigid block) vs the layer directly below it, i.e. the lower parent's top layer |
 | `lattice_vectors` | primitive cell (from POSCAR) | moiré commensurate cell |
 | `angle_between_vectors` | angle of the primitive cell | angle of the moiré cell |
 | `residual` | `null` | `delvec` from the coincidence search at this step |
@@ -195,7 +195,7 @@ coefficients:                            # integer coordinates of a1, a2; null a
   material field.
 - **`parents`** — list of parent **ids**. Homobilayer lists the same root id twice.
 - **`twist`** — degrees, anticlockwise rotation of the upper parent block relative to the
-  lower parent's frame. `null` at level 0.
+  layer directly below it (the lower parent's top layer). `null` at level 0.
 - **`lattice_vectors`** — 2×2, rows are `a1`, `a2`, in `units`.
 - **`angle_between_vectors`** — degrees, between `a1` and `a2`.
 - **`residual`** — commensurability error (`delvec`) at this combination step. `null` at level 0.
@@ -213,7 +213,7 @@ These were added uniformly at every level (agent-decided — needs review, §8 #
 | Field | Level 0 | Level ≥ 1 | Why |
 |---|---|---|---|
 | `twist_sequence` | `[]` | `lower.twist_sequence + upper.twist_sequence + [twist]` | The id's `<angles>` part must be computable from a record alone, without parsing parent filenames. |
-| `layer_rotations` | `[0.0]` | `lower.layer_rotations + [r + twist for r in upper.layer_rotations]` | Absolute orientation of every layer, needed to rebuild atoms; also the physically readable angles. `build.write_structure` re-derives it from the lineage and refuses to build if they disagree. |
+| `layer_rotations` | `[0.0]` | `lower.layer_rotations + [lower.layer_rotations[-1] + twist + r for r in upper.layer_rotations]` | Absolute orientation of every layer, needed to rebuild atoms; also the physically readable angles. `build.write_structure` re-derives it from the lineage and refuses to build if they disagree. |
 | `layer_residuals` | `null` | per layer: max over a1, a2 of the distance from the vector to the nearest point of that layer's rotated primitive lattice (Å) | `cumulative_residual` (max over steps) can **under**-estimate the real error, because a later round's cell is an integer combination of an earlier cell and the error grows with the coefficients. This is the direct measurement. Used as the fold tolerance when rebuilding atoms. |
 | `coefficients` | `null` | `{lower: [[n1,n2],[n1',n2']], upper: [[m1,m2],[m1',m2']]}` | The integer solution behind the cell (from `match.scan`): lets anyone check commensurability by hand. |
 
@@ -239,12 +239,13 @@ recomputed from `lattice_vectors`.
   rounded angle; identical recipes get identical ids (so a root used for three layers is
   stored once).
 
-Examples: `bto_1_65687f.yaml` (root), `bto_2_22.62_f4f0dc.yaml` (bilayer),
-`bto_3_22.62_36.87_c35ae7.yaml` (trilayer).
+Examples: `bto_1_406932.yaml` (root), `bto_2_22.62_1fdb6f.yaml` (bilayer),
+`bto_3_22.62_36.87_015688.yaml` (trilayer).
 
-Note that the hash covers the full-precision floats, so the same physical cell found with
-a different angle grid (e.g. `degmin` 1 vs 22) can get a different hash: `np.arange`
-produces 22.620000000000097 in one case and 22.62000000000041 in the other.
+Before hashing, every float is rounded to 8 decimals (1e-8 Å / 1e-8°; `-0.0` → `0.0`), so
+the id does not depend on floating-point noise from the angle grid: the same cell found with
+`np.arange(1, 45, 0.01)` (twist 22.620000000000097) and with `np.arange(22, 23, 0.01)`
+(22.62000000000041) gets the same id (§8 #18). The file keeps full precision.
 
 > The naming scheme is provisional and may be refined; the schema does not depend on
 > it (the authoritative `id` lives inside the file).
@@ -276,9 +277,14 @@ produces 22.620000000000097 in one case and 22.62000000000041 in the other.
   `lattice_vectors` and `layer_rotations` are in that frame. `match.scan` rotates the
   *upper* lattice anticlockwise by `theta` and reports `matchpoint = A @ n` in the lower
   lattice's frame, so a child record inherits the lower parent's frame.
-- **Twist.** `twist` = anticlockwise rotation (deg) of the upper block, as a rigid unit,
-  relative to the lower block's frame. For the trilayer this is the notebook's `Phi`
-  (rotation of layer 3 relative to layer 1), *not* relative to layer 2.
+- **Twist** (owner decision, §8 #32). `twist` = anticlockwise rotation (deg) of the upper
+  block, as a rigid unit, measured from the **layer directly below it** (the lower block's
+  top layer). For a trilayer it is layer 3 relative to layer 2; layer 3's absolute angle is
+  `layer_rotations[2] = θ₁₂ + twist`. `match.scan` still rotates relative to the lower
+  block's frame, so the search sweeps `[degmin, degmax) + lower.layer_rotations[-1]` and
+  stores `twist = scan angle − lower.layer_rotations[-1]`. A round-2 window of 1–60.01° is
+  therefore the trilayer notebook's θ+1 … θ+60.01 window. (The notebook's `Phi` is the
+  absolute angle of layer 3, i.e. `Phi = θ₁₂ + twist`.)
 - **Residual of a step** = max(`delvec` of a1, `delvec` of a2), in Å (the notebooks used
   the `delvec` of a1 only; for the symmetric cells found they are equal).
 - **Cell orientation.** Cells are stored right-handed (`a1 × a2 > 0`).
@@ -317,23 +323,27 @@ produces 22.620000000000097 in one case and 22.62000000000041 in the other.
 | 12 | Multi-layer DOF model | **block-rigid** twists (see §9) |
 | 13 | Entry point | **Python API first**, thin YAML stack-spec wrapper later |
 
-### Implementation decisions (agent-decided — needs review)
+### Implementation decisions (agent-decided, reviewed by the owner on 2026-11-04)
 
 Each was taken during the unattended implementation session with the simplest option
-consistent with the design and the notebooks.
+consistent with the design and the notebooks. The owner reviewed them on 2026-11-04:
+**#32 (twist reference) was changed** to "measured from the layer below", **#18 (hash) was
+changed** to hash rounded floats; all other items were accepted as they are (#16/#22 with
+the filter choice left to the user per run, #21 dedupe on by default, #20 max of the two
+delvecs, #14–#17 all four added fields kept, #19 label rule kept, #25–#31 kept).
 
 | # | Decision | Choice | Reasoning |
 |---|---|---|---|
 | 14 | Store `twist_sequence` | **yes**, list at every level | id must be computable from a record without parsing parent filenames (§6 forbids relying on names). |
 | 15 | Store `layer_rotations` | **yes** | needed to rebuild atoms; lineage-derived value is cross-checked at build time. |
-| 16 | Store `layer_residuals` | **yes** (null at level 0) | the max rule for `cumulative_residual` under-estimates compound errors (BTO trilayer: 5.7e-5 vs 7.6e-5 Å). |
+| 16 | Store `layer_residuals` | **yes** (null at level 0) | the max rule for `cumulative_residual` under-estimates compound errors (BTO trilayer at twist 14.25°: 5.7e-5 vs 7.6e-5 Å). Owner: keep both; each run chooses which to filter on. |
 | 17 | Store `coefficients` | **yes** (null at level 0) | makes the integer solution inspectable. |
-| 18 | Id hash input | sha1 of JSON of all fields except `id`, sorted keys | deterministic, content-addressed; identical recipes share one file. |
+| 18 | Id hash input | sha1 of JSON of all fields except `id`, **floats rounded to 8 decimals**, sorted keys | deterministic, content-addressed; identical recipes share one file; ids are stable across runs with different angle grids (owner decision 2026-11-04; before, raw floats were hashed). |
 | 19 | Heterostructure label | join all labels, collapse only if all equal | simplest unambiguous rule (`pto_sto_sto`). |
 | 20 | Step residual | max(delvec of both vectors) | conservative; equals the notebooks' value for symmetric cells. |
 | 21 | De-duplicate raw matches | **on by default** (`dedupe`, `keep_supercells`, `angle_cluster_tol = 1.5·degstep`) | without it a single BTO angle yields 94 "candidates" that are one cell; the notebooks did the same reduction by hand (norm filter + 0.05° Theta clustering + min delvec). Only equivalent descriptions are merged. |
 | 22 | Extra filter `max_length_mismatch` | available, off by default | the notebooks filtered `|norm_A1 − norm_A2| ≤ 0.1`. |
-| 23 | Notebook-style window | `window_relative_to: lower_top_layer` shifts the round's window by the lower block's top-layer rotation (rounded to 3 dp like the notebook) | reproduces `degmin = degree+1`; default `frame` keeps the window a plain relative twist. |
+| 23 | Notebook-style window | *(superseded by #32)* there is no separate window mode any more: windows are always twists from the layer below, so `degmin: 1, degmax: 60.01` in round 2 is the notebook's θ+1 … θ+60.01 window. The `window_relative_to` parameter was removed. | one convention, one meaning of `degmin`/`degmax`. |
 | 24 | `search_pair` vs filters | `find_candidates` returns all cells; `search_pair` = those passing `Filters`; the driver saves both | "nothing is deleted" and `passed_filter` need the rejected ones too. |
 | 25 | Path resolution | store as written; resolve against `base_dir`/cwd at search time and against the run dir's ancestors at build time | keeps recipes readable and portable inside the repo. |
 | 26 | Fold tolerance when rebuilding | max(`layer_residuals`) | the notebooks used the step's `delvec`; the per-layer max is the real image mismatch. |
@@ -342,6 +352,7 @@ consistent with the design and the notebooks.
 | 29 | Dry run | exact search counts only where known (round 1); later rounds report `?` plus the per-search cost estimate | counts depend on the previous round's results; no guessing. |
 | 30 | `max_candidates` | raises `NotImplementedError` | clear hook for a future top-K cap (decision 10). |
 | 31 | Index / table library | pandas | the notebooks use pandas; `match.py`'s polars output is converted internally. |
+| 32 | Twist reference | **measured from the layer directly below** (lower block's top layer) — owner decision 2026-11-04 | matches how a stack is described layer by layer; reproduces `bto_22.62_36.86.vasp` (layer 3 at 22.62 + 36.86°). Initially the agent used "relative to the lower block's bottom layer" (the notebooks' absolute `Phi`). |
 
 ---
 
@@ -369,7 +380,7 @@ yield intermediate 2-, 4-, …-layer structures, all saved as reusable candidate
 ### Twist model — block-rigid
 
 When two blocks combine, the upper block is rotated as a **single rigid unit** by the
-swept twist. A tree with N leaves has exactly **N−1** internal combinations, matching
+swept twist, measured from the layer directly below it (the lower block's top layer). A tree with N leaves has exactly **N−1** internal combinations, matching
 the **N−1** independent relative orientations of an N-layer stack — so no DOF is lost;
 the twists are simply organised hierarchically (block-relative) rather than per-layer.
 
@@ -427,8 +438,9 @@ thin wrapper read into that API — the reproducible record of a job (decision 1
 - **CLI:** a `mlm` command-line wrapper over the Python API may follow the stack-spec
   loader.
 - **`cumulative_residual` semantics:** the agreed max rule under-estimates compounded
-  errors; `layer_residuals` / `max_layer_residual` give the direct number. Decide which
-  one filters should use by default.
+  errors; `layer_residuals` / `max_layer_residual` give the direct number. Decided
+  (2026-11-04): keep both; each stack spec chooses which to filter on
+  (`max_cumulative_residual` and/or `max_layer_residual`).
 - **`match.scan` skips coefficients with a zero component** (`n1 == 0 or n2 == 0`) and
   keeps only the 25 shortest matches per angle. Cells such as "the bilayer cell itself"
   (`n = (1,0),(0,1)`) can therefore never be found in round 2; the graphene trilayer

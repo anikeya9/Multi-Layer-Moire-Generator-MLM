@@ -32,7 +32,9 @@ best4[COLUMNS]""")
 code("""four_id = best4["id"].iloc[0]
 print(lineage(four.run_dir, four_id))
 print("layer rotations:", np.round(get(four.run_dir, four_id).layer_rotations, 3))""")
-md("""Layers 3 and 4 keep their relative twist of 22.62° — the upper bilayer was rotated as a block.""")
+md("""The round-2 `twist` is measured from layer 2 (the top of the lower bilayer) to layer 3
+(the bottom of the upper bilayer). Layers 3 and 4 keep their relative twist of 22.62° — the
+upper bilayer was rotated as a block.""")
 md("""## 2. Five layers (carry-forward)
 
 L5 has no partner in rounds 1 and 2 and is carried forward unchanged.
@@ -43,9 +45,13 @@ code("""five = run_stack_spec(REPO / "examples/bto_5layer_demo.yaml", base_dir=R
 print(five.summary())""")
 code("""table5 = load_index(five.run_dir)
 table5[COLUMNS]""")
-md("""`passed_filter = False` rows are kept on disk: the spec also asks for
-`max_layer_residual ≤ 1e-3`. Look at the rejected 5-layer cells: their step `residual` is
-below 1e-3 Å, but measured against every layer the error is several times larger.""")
+md("""`passed_filter = False` rows are kept on disk. The spec filters on both the step
+`residual` and `max_layer_residual` (the cell's error measured against every layer); this is
+why each rejected candidate was dropped:""")
+code("""from MLM.spec import load_stack_spec
+filters5 = load_stack_spec(REPO / "examples/bto_5layer_demo.yaml").filters
+for structure_id in table5.loc[~table5["passed_filter"], "id"]:
+    print(structure_id, "->", "; ".join(filters5.reasons_rejected(get(five.run_dir, structure_id))))""")
 code("""five_id = find(five.run_dir, n_layers=5, passed_filter=True)["id"].iloc[0]
 print(lineage(five.run_dir, five_id))
 path = write_structure(five.run_dir, five_id)

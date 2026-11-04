@@ -231,7 +231,7 @@ def find(
 def get(run_dir: PathLike, structure_id: str) -> MoireStructure:
     """Load one structure by id (the id stored in the file, looked up via the index).
 
-    >>> trilayer = get("runs/bto_trilayer_demo", "bto_3_22.62_36.87_1a2b3c")   # doctest: +SKIP
+    >>> trilayer = get("runs/bto_trilayer_demo", "bto_3_22.62_36.87_015688")   # doctest: +SKIP
     """
     table = load_index(run_dir)
     rows = table[table["id"] == structure_id]
@@ -278,11 +278,11 @@ def lineage(run_dir: PathLike, structure_id: str) -> LineageNode:
     """The tree of ancestors of ``structure_id`` back to the level-0 roots.
 
     >>> print(lineage("runs/bto_trilayer_demo", trilayer_id))   # doctest: +SKIP
-    bto_3_22.62_36.87_...  (3 layers)  twist=36.8700  residual=5.75e-05
-        bto_2_22.62_...  (2 layers)  twist=22.6200  residual=3.39e-05
-            bto_1_65687f  (1 layer)
-            bto_1_65687f  (1 layer)
-        bto_1_65687f  (1 layer)
+    bto_3_22.62_36.87_015688  (3 layers)  twist=36.8700  residual=1.33e-04
+        bto_2_22.62_1fdb6f  (2 layers)  twist=22.6200  residual=3.39e-05
+            bto_1_406932  (1 layer)
+            bto_1_406932  (1 layer)
+        bto_1_406932  (1 layer)
     """
     cache: dict[str, MoireStructure] = {}
 

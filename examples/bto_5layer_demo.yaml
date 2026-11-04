@@ -11,8 +11,8 @@ layers:
 search:
   default: {degmin: 22.0, degmax: 23.0, degstep: 0.01, dtol: 5.0e-4, nmin: -10, nmax: 10, goodangles: [90.0]}
   rounds:
-    2: {degmin: 36.5, degmax: 37.5}
-    3: {degmin: 20.0, degmax: 25.0, nmin: -40, nmax: 40}
+    2: {degmin: 30.0, degmax: 31.0}
+    3: {degmin: 35.0, degmax: 40.0, nmin: -40, nmax: 40}
 filters:
   max_residual: 1.0e-3
   max_layer_residual: 1.0e-3
