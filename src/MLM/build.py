@@ -125,11 +125,31 @@ def _rotate_xy(frame: pd.DataFrame, angle_deg: float) -> pd.DataFrame:
     return rotated
 
 
-def _replicated_layer(poscar: str, radius: float, search_dirs: Sequence[PathLike]) -> tuple[pd.DataFrame, int]:
-    """Atoms of one primitive layer replicated over a disc of ``radius``; also atoms/cell."""
+def _strain_xy(frame: pd.DataFrame, strain: np.ndarray) -> pd.DataFrame:
+    """Apply the in-plane strain ``(I + ε)`` to x, y (fractional coordinates kept, z unchanged)."""
+    if not np.any(strain):
+        return frame
+    deformation = np.eye(2) + strain
+    xy = frame[["x", "y"]].to_numpy() @ deformation.T
+    strained = frame.copy()
+    strained["x"], strained["y"] = xy[:, 0], xy[:, 1]
+    return strained
+
+
+def _replicated_layer(
+    poscar: str, radius: float, search_dirs: Sequence[PathLike], strain: Optional[np.ndarray] = None
+) -> tuple[pd.DataFrame, int]:
+    """Atoms of one (optionally strained) primitive layer over a disc of ``radius``; also atoms/cell.
+
+    ``strain`` is the layer's 2x2 strain tensor (fractions) in its own frame. It is
+    applied to the replicated positions, which is the same as straining the primitive
+    cell and keeping every atom's fractional coordinates; z is not changed.
+    """
+    strain = np.zeros((2, 2)) if strain is None else np.asarray(strain)
     primitive = read_primitive(poscar, search_dirs)
     cell, types, coords = primitive["cell"], primitive["atom_types"], primitive["coords"]
-    n = replicas_needed(primitive["in_plane"], radius)
+    strained_in_plane = primitive["in_plane"] @ (np.eye(2) + strain).T
+    n = replicas_needed(strained_in_plane, radius)
     _, _, positions, replicated_types = sw.replicate_atoms(
         a=cell[0], b=cell[1], c=cell[2],
         atom_data=coords, atom_type_arr=types, natoms=len(coords),
@@ -137,7 +157,7 @@ def _replicated_layer(poscar: str, radius: float, search_dirs: Sequence[PathLike
     )
     frame = pd.DataFrame(positions, columns=["x", "y", "z"])
     frame["type"] = replicated_types
-    return frame, len(coords)
+    return _strain_xy(frame, strain), len(coords)
 
 
 def build_atoms(
@@ -158,6 +178,9 @@ def build_atoms(
     - ``fold_tolerance``: ``dtol`` for ``select_atoms_fractional``; defaults to the
       cell's worst per-layer residual (the notebooks passed the step's ``delvec``).
 
+    Each layer is strained by its ``record.layer_strains`` tensor (in its own frame)
+    before it is rotated, so strained layers fit the cell exactly.
+
     >>> built = build_atoms(get("runs/demo", some_id))   # doctest: +SKIP
     >>> built.counts_ok, built.composition                # doctest: +SKIP
     (True, {'Ba': 390, 'O': 780, 'Ti': 195})
@@ -169,8 +192,9 @@ def build_atoms(
     layers = []
     expected_counts = []
     top_of_previous: Optional[float] = None
+    strains = record.strain_tensors()
     for position, (poscar, angle) in enumerate(zip(record.source_poscar, rotations)):
-        frame, atoms_per_cell = _replicated_layer(poscar, radius, search_dirs)
+        frame, atoms_per_cell = _replicated_layer(poscar, radius, search_dirs, strains[position])
         if top_of_previous is not None:
             frame["z"] = frame["z"] + interlayer_gap + top_of_previous
         top_of_previous = float(frame["z"].max())
@@ -178,6 +202,7 @@ def build_atoms(
         frame["layer"] = position
         layers.append(frame)
         primitive_area = abs(np.linalg.det(read_primitive(poscar, search_dirs)["in_plane"]))
+        primitive_area *= abs(np.linalg.det(np.eye(2) + strains[position]))  # strained cell area
         expected_counts.append(int(round(record.cell_area / primitive_area)) * atoms_per_cell)
 
     stacked = pd.concat(layers, ignore_index=True)

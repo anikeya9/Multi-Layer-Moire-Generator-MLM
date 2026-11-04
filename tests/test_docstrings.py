@@ -8,7 +8,7 @@ import importlib
 
 import pytest
 
-MODULES = ["MLM.structure", "MLM.search", "MLM.index", "MLM.spec", "MLM.build", "MLM.cli"]
+MODULES = ["MLM.structure", "MLM.strain", "MLM.search", "MLM.index", "MLM.spec", "MLM.build", "MLM.cli"]
 
 
 @pytest.mark.parametrize("name", MODULES)

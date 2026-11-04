@@ -46,6 +46,7 @@ INDEX_COLUMNS: tuple[str, ...] = (
     "residual",
     "cumulative_residual",
     "max_layer_residual",
+    "max_strain",
     "cell_area",
     "a1_length",
     "a2_length",
@@ -73,6 +74,7 @@ def index_row(record: MoireStructure, round_number: int, passed_filter: bool, pa
         "residual": record.residual,
         "cumulative_residual": record.cumulative_residual,
         "max_layer_residual": record.worst_layer_residual,
+        "max_strain": record.max_strain,
         "cell_area": record.cell_area,
         "a1_length": float((a1 @ a1) ** 0.5),
         "a2_length": float((a2 @ a2) ** 0.5),
@@ -168,6 +170,8 @@ def load_index(run_dir: PathLike) -> pd.DataFrame:
         raise FileNotFoundError(f"no {INDEX_FILENAME} in {run_dir}; did the run finish a round?")
     table = pd.read_csv(path, keep_default_na=True)
     table["passed_filter"] = table["passed_filter"].astype(bool)
+    if "max_strain" not in table.columns:  # index written before strain support: all rigid
+        table.insert(INDEX_COLUMNS.index("max_strain"), "max_strain", 0.0)
     return table
 
 
@@ -190,6 +194,7 @@ def find(
     max_layer_residual: Optional[float] = None,
     max_cell_area: Optional[float] = None,
     twist_range: Optional[tuple[float, float]] = None,
+    max_strain: Optional[float] = None,
     angle_tol: float = 1e-3,
 ) -> pd.DataFrame:
     """Filter the index table; every argument left as ``None`` is ignored.
@@ -198,6 +203,7 @@ def find(
       ``["pto", "sto"]`` must match the stacking order exactly.
     - ``angle_between_vectors`` matches within ``angle_tol`` degrees.
     - ``twist_range=(lo, hi)`` keeps rows with ``lo <= twist <= hi``.
+    - ``max_strain`` (percent): largest absolute principal strain of any layer.
 
     Results are sorted by ``cumulative_residual`` (best first).
 
@@ -215,6 +221,8 @@ def find(
         keep &= table["max_layer_residual"] <= max_layer_residual
     if max_cell_area is not None:
         keep &= table["cell_area"] <= max_cell_area
+    if max_strain is not None:
+        keep &= table["max_strain"] <= max_strain
     if angle_between_vectors is not None:
         keep &= (table["angle_between_vectors"] - angle_between_vectors).abs() <= angle_tol
     if twist_range is not None:

@@ -45,7 +45,7 @@ from MLM.moire_lattice_vector_finder import read_vasp
 PathLike = Union[str, Path]
 
 #: Order of the keys in every YAML recipe. The first twelve are the agreed schema
-#: (DESIGN.md §5); the last four were added because the rebuild / index need them
+#: (DESIGN.md §5); the last five were added because the rebuild / index need them
 #: (DESIGN.md §5.1). Keep this tuple and ``to_dict`` in sync.
 SCHEMA_KEYS: tuple[str, ...] = (
     "id",
@@ -65,6 +65,7 @@ SCHEMA_KEYS: tuple[str, ...] = (
     "layer_rotations",
     "layer_residuals",
     "coefficients",
+    "layer_strains",
 )
 
 #: Number of hex characters of the sha1 hash used in the id.
@@ -225,6 +226,7 @@ class MoireStructure:
     layer_rotations: list[float] = field(default_factory=lambda: [0.0])
     layer_residuals: Optional[list[float]] = None
     coefficients: Optional[dict[str, list[list[int]]]] = None
+    layer_strains: Optional[list[list[list[float]]]] = None
     id: str = ""
 
     def __post_init__(self) -> None:
@@ -237,6 +239,10 @@ class MoireStructure:
         self.twist_sequence = [float(angle) for angle in self.twist_sequence]
         if self.layer_residuals is not None:
             self.layer_residuals = [float(value) for value in self.layer_residuals]
+        if self.layer_strains is None:
+            # Unstrained layers (also: recipes written before the strain feature).
+            self.layer_strains = [[[0.0, 0.0], [0.0, 0.0]] for _ in range(self.n_layers)]
+        self.layer_strains = [np.asarray(tensor, dtype=float).reshape(2, 2).tolist() for tensor in self.layer_strains]
         self._validate()
         if not self.id:
             self.id = self.make_id()
@@ -245,7 +251,7 @@ class MoireStructure:
         """Catch inconsistent records early (cheap checks only)."""
         if self.level != self.n_layers - 1:
             raise ValueError(f"level must be n_layers - 1, got level={self.level}, n_layers={self.n_layers}")
-        for name in ("material", "source_poscar", "layer_rotations"):
+        for name in ("material", "source_poscar", "layer_rotations", "layer_strains"):
             if len(getattr(self, name)) != self.n_layers:
                 raise ValueError(f"{name} must have one entry per layer ({self.n_layers}), got {getattr(self, name)}")
         if self.level == 0:
@@ -340,6 +346,7 @@ class MoireStructure:
             "layer_rotations": list(self.layer_rotations),
             "layer_residuals": self.layer_residuals,
             "coefficients": self.coefficients,
+            "layer_strains": [[list(row) for row in tensor] for tensor in self.layer_strains],
         }
         return _to_builtin(data)
 
@@ -368,9 +375,13 @@ class MoireStructure:
           found with ``np.arange(1, 45, 0.01)`` (twist 22.620000000000097) and with
           ``np.arange(22, 23, 0.01)`` (22.62000000000041) gets the same id.
           The YAML file itself keeps full precision.
+        - ``layer_strains`` is left out when every layer is unstrained, so recipes
+          without strain keep the ids they had before strain support was added.
         """
         content = _rounded_for_hash(self.to_dict())
         content.pop("id")
+        if not self.is_strained:
+            content.pop("layer_strains")
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:HASH_LENGTH]
 
@@ -404,6 +415,20 @@ class MoireStructure:
     def is_root(self) -> bool:
         """True for level-0 (monolayer) records."""
         return self.level == 0
+
+    @property
+    def is_strained(self) -> bool:
+        """True if any layer carries a non-zero strain."""
+        return any(value != 0.0 for tensor in self.layer_strains for row in tensor for value in row)
+
+    def strain_tensors(self) -> list[np.ndarray]:
+        """Per-layer strain tensors as fractions (``layer_strains`` is stored in percent)."""
+        return [np.asarray(tensor) / 100.0 for tensor in self.layer_strains]
+
+    @property
+    def max_strain(self) -> float:
+        """Largest absolute principal strain over all layers, in percent (0 if unstrained)."""
+        return max(float(np.max(np.abs(np.linalg.eigvalsh(np.asarray(t))))) for t in self.layer_strains)
 
     @property
     def worst_layer_residual(self) -> Optional[float]:

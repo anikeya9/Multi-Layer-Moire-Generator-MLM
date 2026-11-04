@@ -32,6 +32,7 @@ import yaml
 
 from MLM.index import SPEC_FILENAME, RunStore
 from MLM.match import run_and_filter
+from MLM.strain import STRAIN_MODES, fit_strain, scan_tolerance, strain_magnitude
 from MLM.structure import MoireStructure, PathLike, read_primitive
 
 # ===========================================================================
@@ -61,6 +62,9 @@ class SearchParams:
     - ``angle_cluster_tol`` — matches with the same lattice at twists closer than this
       (deg) are the same structure seen at neighbouring grid angles; only the
       lowest-residual one is kept. ``None`` → ``1.5 * degstep``.
+    - ``strain_mode`` — which strain tensors are allowed when a layer has a strain limit
+      (see :mod:`MLM.strain`): ``"isotropic"`` (default; ε = e·I), ``"axial"``
+      (ε = diag(e_xx, e_yy)) or ``"full"`` (any symmetric ε). Ignored without strain.
 
     >>> SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,))
     SearchParams(degmin=22.0, degmax=23.0, degstep=0.01, dtol=0.0005, nmin=-10, nmax=10, ...)
@@ -76,12 +80,15 @@ class SearchParams:
     dedupe: bool = True
     keep_supercells: bool = False
     angle_cluster_tol: Optional[float] = None
+    strain_mode: str = "isotropic"
 
     def __post_init__(self) -> None:
         # Accept lists from YAML but store an (immutable, hashable) tuple.
         object.__setattr__(self, "goodangles", tuple(float(a) for a in self.goodangles))
         if self.degmax <= self.degmin or self.degstep <= 0:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
+        if self.strain_mode not in STRAIN_MODES:
+            raise ValueError(f"strain_mode must be one of {STRAIN_MODES}, got {self.strain_mode!r}")
         if self.nmax <= self.nmin:
             raise ValueError(f"need nmin < nmax, got {self.nmin}, {self.nmax}")
 
@@ -193,7 +200,20 @@ class CellMatch:
     vectors: np.ndarray  # 2x2, rows a1, a2, in the lower block's frame
     lower_coeffs: np.ndarray  # 2x2 int
     upper_coeffs: np.ndarray  # 2x2 int
-    residual: float  # max(delvec of a1, delvec of a2), in Å
+    residual: float  # max(delvec of a1, delvec of a2), in Å (after straining, if strained)
+    lower_strain: Optional[np.ndarray] = None  # 2x2 strain (fraction) of a strained lower layer
+    upper_strain: Optional[np.ndarray] = None  # 2x2 strain (fraction) of a strained upper layer
+
+    @property
+    def upper_lattice_key(self) -> tuple[int, ...]:
+        """HNF of the upper coefficients: with large strain tolerances the same lower
+        cell can meet different upper lattice points, which are different structures."""
+        return tuple(hermite_normal_form(self.upper_coeffs).ravel().tolist())
+
+    @property
+    def strain(self) -> float:
+        """Largest absolute principal strain of both layers (fraction; 0 = unstrained)."""
+        return max(strain_magnitude(self.lower_strain), strain_magnitude(self.upper_strain))
 
     @property
     def index(self) -> int:
@@ -371,10 +391,13 @@ def layer_residuals(
     poscars: Sequence[str],
     rotations: Sequence[float],
     search_dirs: Sequence[PathLike] = (),
+    strains: Optional[Sequence[np.ndarray]] = None,
 ) -> list[float]:
     """True commensurability error (Å) of ``cell`` with each primitive layer.
 
-    For layer *i* with primitive vectors ``P_i`` rotated by ``rotations[i]``, each
+    For layer *i* with primitive vectors ``P_i``, strained by ``strains[i]`` (2x2,
+    fractions, in the layer's own frame; ``None`` = unstrained) and rotated by
+    ``rotations[i]``, each
     cell vector ``v`` is written in that layer's basis, rounded to integers and
     mapped back; the distance to ``v`` is the error. The result per layer is the
     worse of the two cell vectors.
@@ -383,10 +406,13 @@ def layer_residuals(
     final cell directly against every layer, so errors that grow when a
     cell is multiplied up in later rounds are included.
     """
+    if strains is None:
+        strains = [np.zeros((2, 2))] * len(poscars)
     residuals = []
-    for poscar, rotation in zip(poscars, rotations):
+    for poscar, rotation, strain in zip(poscars, rotations, strains):
         primitive = read_primitive(poscar, search_dirs)["in_plane"]
-        basis = rotation_matrix_2d(rotation) @ primitive.T  # columns = rotated a, b
+        # columns = strained, then rotated a, b
+        basis = rotation_matrix_2d(rotation) @ (np.eye(2) + strain) @ primitive.T
         worst = 0.0
         for vector in cell:
             coords = np.linalg.solve(basis, vector)
@@ -400,6 +426,13 @@ def _max_ignoring_none(*values: Optional[float]) -> float:
     return max(value for value in values if value is not None)
 
 
+def _clean(strain: np.ndarray) -> np.ndarray:
+    """Set float noise (|ε| < 1e-9, i.e. 1e-7 %) to exactly 0, so an unneeded strain reads as 0."""
+    strain = np.array(strain, dtype=float)
+    strain[np.abs(strain) < 1e-9] = 0.0
+    return strain
+
+
 def record_from_cell(
     lower: MoireStructure,
     upper: MoireStructure,
@@ -411,11 +444,16 @@ def record_from_cell(
     Lists are concatenated lower-first. The upper block is rotated as a rigid unit:
     its bottom layer ends up at (rotation of the lower block's top layer + twist),
     and its other layers keep their rotations relative to that bottom layer.
+    A strained parent (only possible for a level-0 layer) contributes its new strain;
+    otherwise the parent's ``layer_strains`` are inherited unchanged.
     """
     upper_base = twist_offset(lower) + cell.twist
     rotations = list(lower.layer_rotations) + [upper_base + rotation for rotation in upper.layer_rotations]
     poscars = list(lower.source_poscar) + list(upper.source_poscar)
     n_layers = lower.n_layers + upper.n_layers
+    lower_strains = lower.strain_tensors() if cell.lower_strain is None else [_clean(cell.lower_strain)]
+    upper_strains = upper.strain_tensors() if cell.upper_strain is None else [_clean(cell.upper_strain)]
+    strains = lower_strains + upper_strains
     return MoireStructure(
         level=n_layers - 1,
         n_layers=n_layers,
@@ -429,9 +467,63 @@ def record_from_cell(
         units=lower.units,
         twist_sequence=list(lower.twist_sequence) + list(upper.twist_sequence) + [cell.twist],
         layer_rotations=rotations,
-        layer_residuals=layer_residuals(cell.vectors, poscars, rotations, search_dirs),
+        layer_residuals=layer_residuals(cell.vectors, poscars, rotations, search_dirs, strains),
         coefficients={"lower": cell.lower_coeffs.tolist(), "upper": cell.upper_coeffs.tolist()},
+        layer_strains=[(100.0 * strain).tolist() for strain in strains],  # stored in percent
     )
+
+
+def strain_cells(
+    cells: list[CellMatch],
+    lower: MoireStructure,
+    upper: MoireStructure,
+    params: SearchParams,
+    limits: tuple[float, float],
+) -> list[CellMatch]:
+    """Turn near-coincidences into exactly commensurate, strained cells.
+
+    ``limits`` are the strain limits (fractions) of the lower and the upper block.
+
+    1. Group the raw matches by (good angle, lower lattice, upper lattice) and keep
+       one per run of neighbouring grid angles (lowest unstrained residual).
+    2. Solve for the strain of each (:func:`MLM.strain.fit_strain`); drop it if a
+       layer would exceed its limit — such cells are not commensurate within the
+       job's rules, so they are not candidates at all.
+       The fit also corrects the twist; a cell whose exact twist falls outside the
+       requested window ``[degmin, degmax)`` is dropped as well.
+    3. The same structure reached from several runs: keep the smallest strain.
+    4. Unless ``keep_supercells``, keep only the smallest cell at each exact twist.
+    """
+    offset = twist_offset(lower)
+    groups: dict[tuple[Any, ...], list[CellMatch]] = {}
+    for cell in cells:
+        groups.setdefault((cell.goodangle, cell.lattice_key, cell.upper_lattice_key), []).append(cell)
+
+    best_per_structure: dict[tuple[Any, ...], CellMatch] = {}
+    for key, group in groups.items():
+        for run in _split_into_angle_runs(group, params.cluster_tol):
+            start = _best(run)
+            fit = fit_strain(start.vectors, upper.lattice_vectors, start.upper_coeffs,
+                             offset + start.twist, params.strain_mode, *limits)
+            twist = start.twist + fit.twist_correction
+            if not fit.within(*limits) or not params.degmin <= twist < params.degmax:
+                continue
+            strained = replace(start, twist=twist, vectors=fit.cell,
+                               residual=fit.residual, lower_strain=fit.lower_strain, upper_strain=fit.upper_strain)
+            current = best_per_structure.get(key)
+            if current is None or strained.strain < current.strain:
+                best_per_structure[key] = strained
+
+    survivors = list(best_per_structure.values())
+    if not params.keep_supercells:
+        by_twist: dict[tuple[float, float], list[CellMatch]] = {}
+        for cell in survivors:
+            by_twist.setdefault((round(cell.twist, 6), cell.goodangle), []).append(cell)
+        survivors = []
+        for group in by_twist.values():
+            smallest = min(cell.index for cell in group)
+            survivors.extend(cell for cell in group if cell.index == smallest)
+    return sorted(survivors, key=lambda c: (c.twist, c.goodangle, c.strain, c.size_key()))
 
 
 def find_candidates(
@@ -439,11 +531,17 @@ def find_candidates(
     upper: MoireStructure,
     params: SearchParams,
     search_dirs: Sequence[PathLike] = (),
+    strain_limits: tuple[float, float] = (0.0, 0.0),
 ) -> list[MoireStructure]:
     """All commensurate cells of ``lower`` + twisted ``upper`` (no residual filters).
 
     The only selection applied is the good-angle match inside
     ``match.run_and_filter`` (plus de-duplication if ``params.dedupe``).
+
+    ``strain_limits`` = (lower, upper) maximum strain in **percent** (0 = rigid). Only
+    level-0 layers can be strained (blocks built in earlier rounds stay rigid). With a
+    limit, the scan tolerance is widened so that near-coincidences needing up to that
+    strain are found, and each is then strained to an exact match (:func:`strain_cells`).
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
     >>> params = SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,))
@@ -452,17 +550,31 @@ def find_candidates(
     """
     if lower.units != upper.units:
         raise ValueError(f"unit mismatch: {lower.units} vs {upper.units}")
+    limits = (strain_limits[0] / 100.0, strain_limits[1] / 100.0)  # percent -> fraction
+    for block, limit in ((lower, limits[0]), (upper, limits[1])):
+        if limit < 0:
+            raise ValueError(f"strain limits must be >= 0, got {strain_limits}")
+        if limit > 0 and not block.is_root:
+            raise ValueError(f"only level-0 layers can be strained; {block.id} is a {block.n_layers}-layer block")
+    strained = limits[0] > 0 or limits[1] > 0
+
     degmin, degmax = params.window_for(lower)
     a1, a2 = lower.lattice_vectors
     g1, g2 = upper.lattice_vectors
+    tolerance = params.dtol
+    if strained:
+        tolerance = scan_tolerance(params.dtol, sum(limits), max(abs(params.nmin), abs(params.nmax)),
+                                   lower.lattice_vectors, upper.lattice_vectors, params.degstep)
     results = run_and_filter(
         a1, a2, g1, g2,
         degmin=degmin, degmax=degmax, degstep=params.degstep,
-        dtol=params.dtol, nmin=params.nmin, nmax=params.nmax,
+        dtol=tolerance, nmin=params.nmin, nmax=params.nmax,
         goodangles=list(params.goodangles),
     )
     cells = cells_from_run(results, offset=twist_offset(lower))
-    if params.dedupe and cells:
+    if strained and cells:
+        cells = strain_cells(cells, lower, upper, params, limits)
+    elif params.dedupe and cells:
         cells = deduplicate(cells, params.keep_supercells, params.cluster_tol)
     return [record_from_cell(lower, upper, cell, search_dirs) for cell in cells]
 
@@ -473,6 +585,7 @@ def search_pair(
     params: SearchParams,
     filters: Optional[Filters] = None,
     search_dirs: Sequence[PathLike] = (),
+    strain_limits: tuple[float, float] = (0.0, 0.0),
 ) -> list[MoireStructure]:
     """Commensurate cells of ``lower`` + twisted ``upper`` that pass ``filters``.
 
@@ -488,7 +601,7 @@ def search_pair(
     (22.620000000000097, 3.39e-05)
     """
     filters = filters or Filters()
-    candidates = find_candidates(lower, upper, params, search_dirs)
+    candidates = find_candidates(lower, upper, params, search_dirs, strain_limits)
     return [candidate for candidate in candidates if filters.passes(candidate)]
 
 
@@ -721,12 +834,23 @@ def job_to_spec_dict(
     schedule: SearchSchedule,
     filters: Filters,
     output_dir: PathLike,
+    strain_limits: Optional[Sequence[float]] = None,
 ) -> dict[str, Any]:
-    """The stack-spec dict equivalent to a ``build_stack`` call (for ``stack_spec.yaml``)."""
+    """The stack-spec dict equivalent to a ``build_stack`` call (for ``stack_spec.yaml``).
+
+    A layer's ``strain`` (percent) is written only when it is non-zero.
+    """
+    limits = strain_limits if strain_limits is not None else [0.0] * len(layers)
+    layer_entries = []
+    for layer, limit in zip(layers, limits):
+        entry = {"poscar": layer.source_poscar[0], "material": layer.material[0]}
+        if limit:
+            entry["strain"] = float(limit)
+        layer_entries.append(entry)
     return {
         "name": name,
         "output_dir": str(output_dir),
-        "layers": [{"poscar": layer.source_poscar[0], "material": layer.material[0]} for layer in layers],
+        "layers": layer_entries,
         "search": schedule.to_dict(),
         "filters": asdict(filters),
     }
@@ -742,6 +866,7 @@ def build_stack(
     search_dirs: Sequence[PathLike] = (),
     spec: Optional[dict[str, Any]] = None,
     log: Optional[Callable[[str], None]] = print,
+    strain_limits: Optional[Sequence[float]] = None,
 ) -> StackResult:
     """Build every commensurate N-layer cell by a tournament-tree reduction.
 
@@ -758,6 +883,10 @@ def build_stack(
       cap (DESIGN.md §10); passing a value raises ``NotImplementedError``.
     - ``spec`` is written as ``stack_spec.yaml``; by default one is generated from
       the arguments. Pass ``spec={}`` to skip writing it.
+    - ``strain_limits``: maximum strain of each layer in **percent** (one value per
+      layer, 0 = rigid; default: all rigid). A layer is strained only in the first
+      search it takes part in, i.e. while it is still a single layer; blocks built in
+      earlier rounds stay rigid. The strain mode comes from the search parameters.
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
     >>> schedule = SearchSchedule(SearchParams(degmin=22, degmax=23), {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}})
@@ -776,13 +905,14 @@ def build_stack(
         if not layer.is_root:
             raise ValueError(f"build_stack expects level-0 layers, got {layer!r}")
 
+    strain_limits = _check_strain_limits(strain_limits, len(layers))
     plan = plan_rounds(len(layers))
     if dry_run:
         return _dry_run(layers, plan, schedule, run_dir, say)
 
     store = RunStore(Path(run_dir))
     if spec is None:
-        spec = job_to_spec_dict(Path(run_dir).name, layers, schedule, filters, run_dir)
+        spec = job_to_spec_dict(Path(run_dir).name, layers, schedule, filters, run_dir, strain_limits)
     if spec:
         with open(store.run_dir / SPEC_FILENAME, "w", encoding="utf-8") as handle:
             yaml.safe_dump(spec, handle, sort_keys=False)
@@ -808,12 +938,14 @@ def build_stack(
                 say(str(report))
                 reports.append(report)
                 continue
+            limits = (_block_strain_limit(step.lower, strain_limits), _block_strain_limit(step.upper, strain_limits))
+            strain_note = f", strain ≤ {limits[0]:g}% / {limits[1]:g}% ({params.strain_mode})" if any(limits) else ""
             say(f"round {round_number}: {step}: {report.n_searches} searches, twist window "
-                f"{params.degmin:g}–{params.degmax:g}° "
+                f"{params.degmin:g}–{params.degmax:g}°{strain_note} "
                 f"(~{params.estimated_cost():.2e} lattice-point tests each)")
             started = time.perf_counter()
             passed, n_found = _run_step(blocks[step.lower], blocks[step.upper], params, filters,
-                                        store, round_number, search_dirs)
+                                        store, round_number, search_dirs, limits)
             report.n_found, report.n_passed = n_found, len(passed)
             report.seconds = time.perf_counter() - started
             new_blocks[step.result] = passed
@@ -826,6 +958,24 @@ def build_stack(
     return StackResult(Path(run_dir), plan, reports, blocks[full_span], dry_run=False)
 
 
+def _check_strain_limits(strain_limits: Optional[Sequence[float]], n_layers: int) -> list[float]:
+    """Validate per-layer strain limits (percent); ``None`` means all layers rigid."""
+    if strain_limits is None:
+        return [0.0] * n_layers
+    limits = [float(limit) for limit in strain_limits]
+    if len(limits) != n_layers:
+        raise ValueError(f"strain_limits needs one value per layer ({n_layers}), got {len(limits)}")
+    if any(limit < 0 for limit in limits):
+        raise ValueError(f"strain limits must be >= 0 (percent), got {limits}")
+    return limits
+
+
+def _block_strain_limit(span: Span, strain_limits: Sequence[float]) -> float:
+    """Strain limit (percent) of a block: its layer's limit if it is a single layer, else 0."""
+    first, stop = span
+    return strain_limits[first] if stop - first == 1 else 0.0
+
+
 def _run_step(
     lowers: list[MoireStructure],
     uppers: list[MoireStructure],
@@ -834,13 +984,14 @@ def _run_step(
     store: RunStore,
     round_number: int,
     search_dirs: Sequence[PathLike],
+    strain_limits: tuple[float, float] = (0.0, 0.0),
 ) -> tuple[list[MoireStructure], int]:
     """All lower x upper searches of one step; store everything, return the passing ones."""
     passed: dict[str, MoireStructure] = {}  # keyed by id: identical recipes count once
     n_found = 0
     for lower in lowers:
         for upper in uppers:
-            for candidate in find_candidates(lower, upper, params, search_dirs):
+            for candidate in find_candidates(lower, upper, params, search_dirs, strain_limits):
                 ok = filters.passes(candidate)
                 store.add(candidate, round_number=round_number, passed_filter=ok)
                 n_found += 1

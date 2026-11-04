@@ -9,6 +9,7 @@ loader on top of it, and the spec file is the reproducible record of a job::
       - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
       - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
       - {poscar: moire_structures/bto/bto_1-layer.vasp, material: bto}
+      # optional per layer: strain: 1.0   (max strain in percent; see MLM.strain)
     search:
       default: {degmin: 1.0, degmax: 45.0, degstep: 0.01, dtol: 5.0e-4,
                 nmin: -10, nmax: 10, goodangles: [90.0]}
@@ -45,16 +46,21 @@ from MLM.search import Filters, SearchParams, SearchSchedule, StackResult, build
 from MLM.structure import MoireStructure, PathLike
 
 TOP_LEVEL_KEYS = {"name", "output_dir", "layers", "search", "filters"}
-LAYER_KEYS = {"poscar", "material"}
+LAYER_KEYS = {"poscar", "material", "strain"}
+REQUIRED_LAYER_KEYS = {"poscar", "material"}
 SEARCH_KEYS = {"default", "rounds", "interfaces"}
 
 
 @dataclass
 class LayerSpec:
-    """One layer of the stack: a primitive POSCAR and its material label."""
+    """One layer of the stack: a primitive POSCAR, its material label and its strain limit.
+
+    ``strain`` is the maximum strain of this layer in percent (0 = rigid, the default).
+    """
 
     poscar: str
     material: str
+    strain: float = 0.0
 
 
 @dataclass
@@ -130,8 +136,11 @@ def parse_stack_spec(data: dict[str, Any], source_path: Optional[Path] = None) -
     _check_keys("the top level", data, TOP_LEVEL_KEYS, required={"name", "layers"})
     layers = []
     for position, layer in enumerate(data["layers"], start=1):
-        _check_keys(f"layers[{position}]", layer, LAYER_KEYS, required=LAYER_KEYS)
-        layers.append(LayerSpec(poscar=str(layer["poscar"]), material=str(layer["material"])))
+        _check_keys(f"layers[{position}]", layer, LAYER_KEYS, required=REQUIRED_LAYER_KEYS)
+        strain = float(layer.get("strain") or 0.0)
+        if strain < 0:
+            raise ValueError(f"stack spec: layers[{position}].strain must be >= 0 (percent), got {strain}")
+        layers.append(LayerSpec(poscar=str(layer["poscar"]), material=str(layer["material"]), strain=strain))
     if not layers:
         raise ValueError("stack spec: 'layers' must list at least one layer")
     name = str(data["name"])
@@ -184,6 +193,7 @@ def run_stack_spec(
         search_dirs=[base_dir],
         spec={},  # we copy the original file instead (keeps the user's comments)
         log=log,
+        strain_limits=[layer.strain for layer in spec.layers],
     )
     if not dry_run:
         shutil.copyfile(path, run_dir / SPEC_FILENAME)

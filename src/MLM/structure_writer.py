@@ -378,6 +378,11 @@ def select_atoms_fractional(atom_df, A1, A2, dtol=None, match_tol=None):
     xy = atom_df[['x', 'y']].values
     frac = np.linalg.solve(M, xy.T).T
     frac_folded = frac % 1.0
+    # Floating point: a tiny negative value (e.g. -1e-17) folds to exactly 1.0, which
+    # lies outside [0, 1) and breaks the periodic KDTree below. Such atoms sit on the
+    # cell boundary, i.e. at fractional coordinate 0. (Common for exactly commensurate,
+    # e.g. strained, cells.)
+    frac_folded[frac_folded >= 1.0] = 0.0
 
     # ------------------------------------------------------------------
     # 3. Compute bin width
