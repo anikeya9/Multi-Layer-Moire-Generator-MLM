@@ -44,7 +44,8 @@ jobs:
           TQDM_DISABLE: "1"
         run: |
           for notebook in dev/yaml_multilayer_demo.ipynb dev/yaml_multilayer_stretch.ipynb \
-                          notebooks/moire_stack_explorer.ipynb notebooks/mlm_gui.ipynb; do
+                          notebooks/moire_stack_explorer.ipynb notebooks/mlm_gui.ipynb \
+                          notebooks/feature_tour.ipynb; do
             echo "::group::$notebook"
             (cd "$(dirname "$notebook")" && jupyter nbconvert --to notebook --execute \
                  --output-dir /tmp/executed "$(basename "$notebook")")

@@ -68,6 +68,12 @@ python -m MLM write runs/bto_trilayer_demo <id> --fmt vasp # rebuild atoms -> VA
 ```
 Heterostructures can be strained to exact matches: give a layer a `strain` limit in % (branch `with-straining`, `docs/DESIGN.md` §11). Try it: `notebooks/moire_stack_explorer.ipynb` (list your layers and a twist range per interface, then run all cells). Walkthrough: `dev/yaml_multilayer_demo.ipynb`. Docs: `docs/IMPLEMENTATION_NOTES.md`, `docs/DESIGN.md`. Tests: `python -m pytest`.  
 
+**Getting started**  
+```
+pip install -e ".[gui,checks]"
+```
+Then open `notebooks/feature_tour.ipynb` (every feature, with short explanations; runs in ~2 minutes), `notebooks/moire_stack_explorer.ipynb` (your own stack in one input cell), or the GUI below.  
+
 **Graphical interface**  
 `mlm gui` opens the GUI in the browser (or run `notebooks/mlm_gui.ipynb` in Jupyter): stack the layers, set a twist range per interface, run, browse the results and look at any structure in 3D before exporting it to VASP/LAMMPS.  
 ![MLM GUI viewer](docs/images/gui_5_viewer.png)  
