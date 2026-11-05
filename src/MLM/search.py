@@ -45,6 +45,9 @@ from MLM.structure import MoireStructure, PathLike, read_primitive
 # 1. Parameters and filters
 # ===========================================================================
 
+#: Allowed values of ``SearchParams.merge_equivalent_twists``.
+MERGE_MODES = ("none", "rotation", "rotation+mirror")
+
 #: Per-angle match cap used by ``max_matches_per_angle="auto"`` in strained searches.
 STRAINED_MATCHES_PER_ANGLE = 200
 
@@ -90,6 +93,9 @@ class SearchParams:
       range; 25 would crowd out the longer, less strained cells, unlimited explodes in
       later rounds (PTO/STO/PTO round 2: 1.5 s with 200, ~2 min unlimited). In round 1,
       200 finds every cell at 1 %/1 % limits and ~80 % at 2 %/2 %.
+    - ``merge_equivalent_twists`` — ``"none"`` (default), ``"rotation"`` or
+      ``"rotation+mirror"``: treat twists related by the upper layer's lattice symmetry
+      as one structure (see :func:`merge_equivalent_twists`).
     - ``strain_residual_tol`` — Å; a strained cell is accepted only if straining closes
       it to within this (the point of straining is a perfect match). Mainly matters for
       ``isotropic``/``axial``, which cannot fix a mismatch in cell *shape*.
@@ -111,6 +117,7 @@ class SearchParams:
     strain_mode: str = "isotropic"
     strain_residual_tol: float = 1e-6
     scanner: str = "fast"
+    merge_equivalent_twists: str = "none"
     include_axes: bool = False
     max_matches_per_angle: Union[int, None, str] = "auto"
 
@@ -119,6 +126,8 @@ class SearchParams:
         object.__setattr__(self, "goodangles", tuple(float(a) for a in self.goodangles))
         if self.degmax <= self.degmin or self.degstep <= 0:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
+        if self.merge_equivalent_twists not in MERGE_MODES:
+            raise ValueError(f"merge_equivalent_twists must be one of {MERGE_MODES}, got {self.merge_equivalent_twists!r}")
         if self.scanner not in SCANNERS:
             raise ValueError(f"scanner must be one of {SCANNERS}, got {self.scanner!r}")
         if self.max_matches_per_angle is not None and self.max_matches_per_angle != "auto" \
@@ -411,6 +420,63 @@ def deduplicate(cells: list[CellMatch], keep_supercells: bool, cluster_tol: floa
     return sorted(survivors, key=lambda c: (c.twist, c.goodangle, c.size_key()))
 
 
+def lattice_rotation_order(lattice_vectors: np.ndarray, tol: float = 1e-4) -> int:
+    """Largest n in (6, 4, 3, 2) such that a rotation by 360°/n maps the 2D lattice onto itself.
+
+    A rotation maps the lattice onto itself if the rotated basis vectors have integer
+    coordinates in the original basis. Every 2D lattice has n ≥ 2 (inversion).
+
+    >>> lattice_rotation_order(np.eye(2)), lattice_rotation_order(np.array([[1.0, 0.0], [0.5, 3 ** 0.5 / 2]]))
+    (4, 6)
+    """
+    basis = np.asarray(lattice_vectors, dtype=float).T  # columns
+    for order in (6, 4, 3):
+        rotated = rotation_matrix_2d(360.0 / order) @ basis
+        coordinates = np.linalg.solve(basis, rotated)
+        if np.allclose(coordinates, np.round(coordinates), atol=tol):
+            return order
+    return 2
+
+
+def canonical_twist(twist: float, order: int, mirror: bool) -> float:
+    """Representative of a twist modulo 360°/order (and modulo sign if ``mirror``).
+
+    >>> canonical_twist(112.62, 4, False), canonical_twist(67.38, 4, True)
+    (22.62, 22.62)
+    """
+    period = 360.0 / order
+    reduced = twist % period
+    if mirror:
+        reduced = min(reduced, period - reduced)
+    return round(reduced, 6) + 0.0
+
+
+def merge_equivalent_twists(
+    cells: list[CellMatch], upper: MoireStructure, mode: str, period_lattice: Optional[np.ndarray] = None
+) -> list[CellMatch]:
+    """Keep one cell per set of symmetry-equivalent twists (``mode`` = :data:`MERGE_MODES`).
+
+    Convention: for an upper **single layer** whose lattice has an n-fold rotation, twists
+    θ and θ + 360°/n give the same structure up to an in-plane translation of that layer
+    (a different stacking registry); with ``"rotation+mirror"`` θ and −θ are also merged —
+    mirror images (enantiomers), equal in energy but of opposite handedness. The lattice
+    symmetry is used, not the atomic basis: if the basis breaks it, do not merge. Upper
+    *blocks* are never merged (their symmetry can be lower than their cell's). Among
+    equivalent cells of the same size the one with the smallest |twist| (then the lowest
+    residual) is kept.
+    """
+    if mode == "none" or not upper.is_root or not cells:
+        return cells
+    order = lattice_rotation_order(upper.lattice_vectors if period_lattice is None else period_lattice)
+    mirror = mode == "rotation+mirror"
+    groups: dict[tuple[Any, ...], list[CellMatch]] = {}
+    for cell in cells:
+        key = (cell.goodangle, canonical_twist(cell.twist, order, mirror), round(abs(np.linalg.det(cell.vectors)), 4))
+        groups.setdefault(key, []).append(cell)
+    kept = [min(group, key=lambda c: (round(abs(c.twist), 6), c.residual)) for group in groups.values()]
+    return sorted(kept, key=lambda c: (c.twist, c.goodangle, c.size_key()))
+
+
 def _split_into_angle_runs(cells: list[CellMatch], cluster_tol: float) -> list[list[CellMatch]]:
     """Split cells into runs of consecutive twists (gaps <= ``cluster_tol``)."""
     ordered = sorted(cells, key=lambda c: c.twist)
@@ -649,6 +715,7 @@ def find_candidates(
         cells = strain_cells(cells, lower, upper, params, limits, roots_elastic)
     elif params.dedupe and cells:
         cells = deduplicate(cells, params.keep_supercells, params.cluster_tol)
+    cells = merge_equivalent_twists(cells, upper, params.merge_equivalent_twists)
     return [record_from_cell(lower, upper, cell, search_dirs, layer_elastic) for cell in cells]
 
 
