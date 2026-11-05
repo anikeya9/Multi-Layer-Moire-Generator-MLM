@@ -904,6 +904,7 @@ def build_stack(
     resume: bool = False,
     should_stop: Optional[Callable[[], bool]] = None,
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    index_format: str = "csv",
 ) -> StackResult:
     """Build every commensurate N-layer cell by a tournament-tree reduction.
 
@@ -933,6 +934,8 @@ def build_stack(
       (finished steps are kept, ``status = "stopped"``; resume later).
     - ``progress_callback``: called after every search with
       ``{"round", "step", "done", "total"}``.
+    - ``index_format``: ``"csv"`` (default, human-readable) or ``"sqlite"`` (for very
+      large runs; ``find`` then filters in SQL).
     - Writes ``run_info.yaml`` (versions, git commit, timings; see :mod:`MLM.runinfo`).
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
@@ -958,7 +961,7 @@ def build_stack(
         return _dry_run(layers, plan, schedule, run_dir, say)
 
     run_dir = Path(run_dir)
-    store = RunStore(run_dir)
+    store = RunStore(run_dir, index_format=index_format)
     job = job_to_spec_dict(run_dir.name, layers, schedule, filters, run_dir, strain_limits)
     progress = _Progress(run_dir, job)
     if resume:

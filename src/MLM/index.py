@@ -21,6 +21,7 @@ Query helpers (all take the run directory):
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence, Union
@@ -30,6 +31,10 @@ import pandas as pd
 from MLM.structure import MoireStructure, PathLike
 
 INDEX_FILENAME = "index.csv"
+#: Alternative index for very large runs (``index_format="sqlite"``): one table, "structures".
+SQLITE_FILENAME = "index.sqlite"
+SQLITE_TABLE = "structures"
+INDEX_FORMATS = ("csv", "sqlite")
 YAML_DIRNAME = "yamls"
 SPEC_FILENAME = "stack_spec.yaml"
 
@@ -98,9 +103,12 @@ class RunStore:
 
     run_dir: Path
     rows: dict[str, dict] = field(default_factory=dict)
+    index_format: str = "csv"
 
     def __post_init__(self) -> None:
         self.run_dir = Path(self.run_dir)
+        if self.index_format not in INDEX_FORMATS:
+            raise ValueError(f"index_format must be one of {INDEX_FORMATS}, got {self.index_format!r}")
         (self.run_dir / YAML_DIRNAME).mkdir(parents=True, exist_ok=True)
 
     def add(self, record: MoireStructure, round_number: int, passed_filter: bool) -> Path:
@@ -117,9 +125,8 @@ class RunStore:
         return path
 
     def load_existing(self) -> None:
-        """Start from the rows of an existing ``index.csv`` (used when resuming a run)."""
-        path = self.run_dir / INDEX_FILENAME
-        if not path.exists():
+        """Start from the rows of an existing index (used when resuming a run)."""
+        if index_path(self.run_dir) is None:
             return
         table = load_index(self.run_dir)
         for row in table.to_dict(orient="records"):
@@ -130,17 +137,48 @@ class RunStore:
             self.rows.setdefault(clean["id"], clean)
 
     def write_index(self) -> Path:
-        """(Re)write ``index.csv`` from the rows collected so far."""
-        return write_index(self.run_dir, list(self.rows.values()))
+        """(Re)write the index (``index.csv`` or ``index.sqlite``) from the rows collected so far."""
+        return write_index(self.run_dir, list(self.rows.values()), self.index_format)
 
 
-def write_index(run_dir: PathLike, rows: Sequence[dict]) -> Path:
-    """Write ``rows`` to ``<run_dir>/index.csv`` (sorted by round, level, twist, id)."""
+def write_index(run_dir: PathLike, rows: Sequence[dict], index_format: str = "csv") -> Path:
+    """Write ``rows`` to ``index.csv`` (default) or ``index.sqlite``, sorted by round, level, twist, id.
+
+    SQLite is meant for very large runs: :func:`find` then filters with SQL instead of
+    loading the whole table, and the most-used columns are indexed.
+    """
     table = pd.DataFrame(list(rows), columns=list(INDEX_COLUMNS))
     table = table.sort_values(["round", "level", "twist", "id"], na_position="first", kind="stable")
-    path = Path(run_dir) / INDEX_FILENAME
-    table.to_csv(path, index=False)
+    if index_format == "csv":
+        path = Path(run_dir) / INDEX_FILENAME
+        table.to_csv(path, index=False)
+        return path
+    if index_format != "sqlite":
+        raise ValueError(f"index_format must be one of {INDEX_FORMATS}, got {index_format!r}")
+    path = Path(run_dir) / SQLITE_FILENAME
+    with sqlite3.connect(path) as connection:
+        table.to_sql(SQLITE_TABLE, connection, if_exists="replace", index=False)
+        for column in ("id", "n_layers", "cumulative_residual", "max_layer_residual", "cell_area"):
+            connection.execute(f"CREATE INDEX IF NOT EXISTS idx_{column} ON {SQLITE_TABLE} ({column})")
+    connection.close()
     return path
+
+
+def index_path(run_dir: PathLike) -> Optional[Path]:
+    """The run's index file: ``index.csv`` or ``index.sqlite`` (the newer one if both exist)."""
+    candidates = [Path(run_dir) / name for name in (INDEX_FILENAME, SQLITE_FILENAME)]
+    existing = [path for path in candidates if path.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda path: path.stat().st_mtime)
+
+
+def _normalise(table: pd.DataFrame) -> pd.DataFrame:
+    """Same column types for both formats (SQLite stores booleans as 0/1)."""
+    table["passed_filter"] = table["passed_filter"].astype(bool)
+    if "max_strain" not in table.columns:  # index written before strain support: all rigid
+        table.insert(INDEX_COLUMNS.index("max_strain"), "max_strain", 0.0)
+    return table
 
 
 def rebuild_index(run_dir: PathLike, passed_filter: bool = True) -> Path:
@@ -178,14 +216,16 @@ def load_index(run_dir: PathLike) -> pd.DataFrame:
     >>> table = load_index("runs/bto_trilayer_demo")      # doctest: +SKIP
     >>> table[["id", "n_layers", "twist", "cumulative_residual"]].head()   # doctest: +SKIP
     """
-    path = Path(run_dir) / INDEX_FILENAME
-    if not path.exists():
-        raise FileNotFoundError(f"no {INDEX_FILENAME} in {run_dir}; did the run finish a round?")
-    table = pd.read_csv(path, keep_default_na=True)
-    table["passed_filter"] = table["passed_filter"].astype(bool)
-    if "max_strain" not in table.columns:  # index written before strain support: all rigid
-        table.insert(INDEX_COLUMNS.index("max_strain"), "max_strain", 0.0)
-    return table
+    path = index_path(run_dir)
+    if path is None:
+        raise FileNotFoundError(f"no {INDEX_FILENAME} or {SQLITE_FILENAME} in {run_dir}; did the run finish a round?")
+    if path.name == SQLITE_FILENAME:
+        with sqlite3.connect(path) as connection:
+            table = pd.read_sql(f"SELECT * FROM {SQLITE_TABLE}", connection)
+        connection.close()
+    else:
+        table = pd.read_csv(path, keep_default_na=True)
+    return _normalise(table)
 
 
 def _material_matches(stored: str, wanted: Union[str, Sequence[str]]) -> bool:
@@ -222,30 +262,47 @@ def find(
 
     >>> find("runs/bto_trilayer_demo", n_layers=3, max_cumulative_residual=1e-3)   # doctest: +SKIP
     """
-    table = load_index(run_dir)
-    keep = pd.Series(True, index=table.index)
+    # Every numeric filter as (SQL condition, parameters, pandas mask function).
+    conditions: list[tuple[str, tuple, object]] = []
+
+    def at_most(column: str, value: Optional[float]) -> None:
+        if value is not None:
+            conditions.append((f"{column} <= ?", (value,), lambda t, c=column, v=value: t[c] <= v))
+
     if n_layers is not None:
-        keep &= table["n_layers"] == n_layers
-    if max_cumulative_residual is not None:
-        keep &= table["cumulative_residual"] <= max_cumulative_residual
-    if max_residual is not None:
-        keep &= table["residual"] <= max_residual
-    if max_layer_residual is not None:
-        keep &= table["max_layer_residual"] <= max_layer_residual
-    if max_cell_area is not None:
-        keep &= table["cell_area"] <= max_cell_area
-    if max_strain is not None:
-        keep &= table["max_strain"] <= max_strain
+        conditions.append(("n_layers = ?", (n_layers,), lambda t: t["n_layers"] == n_layers))
+    at_most("cumulative_residual", max_cumulative_residual)
+    at_most("residual", max_residual)
+    at_most("max_layer_residual", max_layer_residual)
+    at_most("cell_area", max_cell_area)
+    at_most("max_strain", max_strain)
     if angle_between_vectors is not None:
-        keep &= (table["angle_between_vectors"] - angle_between_vectors).abs() <= angle_tol
+        conditions.append(("ABS(angle_between_vectors - ?) <= ?", (angle_between_vectors, angle_tol),
+                           lambda t: (t["angle_between_vectors"] - angle_between_vectors).abs() <= angle_tol))
     if twist_range is not None:
         low, high = twist_range
-        keep &= table["twist"].between(low, high)
+        conditions.append(("twist BETWEEN ? AND ?", (low, high), lambda t: t["twist"].between(low, high)))
     if passed_filter is not None:
-        keep &= table["passed_filter"] == passed_filter
+        conditions.append(("passed_filter = ?", (int(passed_filter),),
+                           lambda t: t["passed_filter"] == passed_filter))
+
+    path = index_path(run_dir)
+    if path is not None and path.name == SQLITE_FILENAME:
+        # Large runs: let SQLite filter, so the whole table never has to be loaded.
+        where = " AND ".join(sql for sql, _, _ in conditions) or "1"
+        parameters = tuple(value for _, values, _ in conditions for value in values)
+        with sqlite3.connect(path) as connection:
+            result = pd.read_sql(f"SELECT * FROM {SQLITE_TABLE} WHERE {where}", connection, params=parameters)
+        connection.close()
+        result = _normalise(result)
+    else:
+        table = load_index(run_dir)
+        keep = pd.Series(True, index=table.index)
+        for _, _, mask in conditions:
+            keep &= mask(table)
+        result = table[keep]
     if material is not None:
-        keep &= table["material"].apply(lambda stored: _material_matches(stored, material))
-    result = table[keep]
+        result = result[result["material"].apply(lambda stored: _material_matches(stored, material))]
     return result.sort_values("cumulative_residual", na_position="first", kind="stable")
 
 
@@ -254,11 +311,18 @@ def get(run_dir: PathLike, structure_id: str) -> MoireStructure:
 
     >>> trilayer = get("runs/bto_trilayer_demo", "bto_3_22.62_36.87_015688")   # doctest: +SKIP
     """
-    table = load_index(run_dir)
-    rows = table[table["id"] == structure_id]
-    if rows.empty:
-        raise KeyError(f"{structure_id!r} is not in {Path(run_dir) / INDEX_FILENAME}")
-    record = MoireStructure.from_yaml(Path(run_dir) / rows.iloc[0]["path"])
+    path = index_path(run_dir)
+    if path is not None and path.name == SQLITE_FILENAME:
+        with sqlite3.connect(path) as connection:
+            found = connection.execute(f"SELECT path FROM {SQLITE_TABLE} WHERE id = ?", (structure_id,)).fetchall()
+        connection.close()
+        paths = [row[0] for row in found]
+    else:
+        table = load_index(run_dir)
+        paths = list(table.loc[table["id"] == structure_id, "path"])
+    if not paths:
+        raise KeyError(f"{structure_id!r} is not in the index of {run_dir}")
+    record = MoireStructure.from_yaml(Path(run_dir) / paths[0])
     if record.id != structure_id:
         raise ValueError(f"index row points to a file whose id is {record.id!r}, not {structure_id!r}")
     return record

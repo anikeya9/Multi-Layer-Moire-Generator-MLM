@@ -30,7 +30,8 @@ FIND_COLUMNS = ["id", "n_layers", "twist", "angle_between_vectors", "residual",
 
 def _cmd_run(args: argparse.Namespace) -> int:
     result = run_stack_spec(args.spec, base_dir=args.base_dir, dry_run=args.dry_run,
-                            log=None if args.quiet else print, workers=args.workers, resume=args.resume)
+                            log=None if args.quiet else print, workers=args.workers, resume=args.resume,
+                            index_format=args.index_format)
     if not args.dry_run:
         print()
         print(result.summary())
@@ -82,6 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--workers", type=int, default=1,
                      help="parallel processes for the searches of a step (0 = all cores)")
     run.add_argument("--resume", action="store_true", help="continue an interrupted run in the same output_dir")
+    run.add_argument("--index-format", choices=["csv", "sqlite"], default="csv",
+                     help="index file format (sqlite for very large runs)")
     run.set_defaults(handler=_cmd_run)
 
     query = commands.add_parser("find", help="filter a run's index.csv")

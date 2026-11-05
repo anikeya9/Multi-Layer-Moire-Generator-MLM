@@ -77,3 +77,41 @@ def test_rebuild_index_from_yamls(small_run, tmp_path):
     rebuilt = load_index(copy)
     assert set(rebuilt["id"]) == set(original["id"])
     assert dict(zip(rebuilt["id"], rebuilt["round"])) == dict(zip(original["id"], original["round"]))
+
+
+def test_sqlite_index_gives_the_same_answers(small_run, tmp_path):
+    """index_format='sqlite': same rows, same find() results (filtered in SQL), same get()."""
+    import shutil
+
+    from MLM.index import SQLITE_FILENAME, write_index
+
+    run_dir, root, bilayers, trilayers = small_run
+    copy = tmp_path / "sqlite_run"
+    shutil.copytree(run_dir, copy)
+    csv_rows = load_index(copy).to_dict(orient="records")
+    (copy / "index.csv").unlink()
+    write_index(copy, csv_rows, index_format="sqlite")
+    assert (copy / SQLITE_FILENAME).exists()
+    a, b = load_index(run_dir), load_index(copy)
+    assert list(a.columns) == list(b.columns) and sorted(a["id"]) == sorted(b["id"])
+    assert b["passed_filter"].dtype == bool
+    queries = [dict(n_layers=2), dict(n_layers=2, passed_filter=True), dict(twist_range=(36.0, 37.0)),
+               dict(material=["bto", "bto", "bto"]), dict(angle_between_vectors=90.0),
+               dict(max_cumulative_residual=1e-4), dict(max_strain=0.0)]
+    for query in queries:
+        assert list(find(run_dir, **query)["id"]) == list(find(copy, **query)["id"]), query
+    assert get(copy, trilayers[0].id) == trilayers[0]
+    with pytest.raises(KeyError):
+        get(copy, "nope")
+
+
+def test_build_stack_with_sqlite_index(tmp_path):
+    from MLM.search import Filters, SearchParams, SearchSchedule, build_stack
+
+    root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
+    schedule = SearchSchedule(SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10))
+    build_stack([root] * 2, schedule, Filters(max_residual=1e-3), run_dir=tmp_path, log=None, index_format="sqlite")
+    assert (tmp_path / "index.sqlite").exists() and not (tmp_path / "index.csv").exists()
+    assert len(find(tmp_path, n_layers=2)) == 1
+    with pytest.raises(ValueError):
+        build_stack([root] * 2, schedule, run_dir=tmp_path / "x", log=None, index_format="parquet")
