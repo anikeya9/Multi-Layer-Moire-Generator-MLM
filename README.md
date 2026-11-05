@@ -72,7 +72,7 @@ Heterostructures can be strained to exact matches: give a layer a `strain` limit
 ```
 pip install -e ".[all]"
 ```
-Then open `notebooks/feature_tour.ipynb` (every feature, with short explanations; runs in ~2 minutes), `notebooks/moire_stack_explorer.ipynb` (your own stack in one input cell), or the GUI below.  
+Then open `notebooks/feature_tour.ipynb` (every feature, with short explanations; runs in ~2 minutes), `notebooks/moire_stack_explorer.ipynb` (your own stack in one input cell), or the GUI below. Step-by-step tutorial for the `with-straining` and `quality-improvements` branches: `docs/TUTORIAL.md`.  
 
 **Graphical interface**  
 `mlm gui` opens the GUI in the browser (or run `notebooks/mlm_gui.ipynb` in Jupyter): stack the layers, set a twist range per interface, run, browse the results and look at any structure in 3D before exporting it to VASP/LAMMPS.  

@@ -453,7 +453,7 @@ SearchParams(..., merge_equivalent_twists="rotation+mirror")
 | Poisson ν = 0.25 on STO strained −0.847 % | thickness × (1 + 0.565 %) exactly; unstrained layer unchanged |
 | lateral shift (½, ½) of layer 2 | layer moves rigidly (≤ 2.3e-4 Å after folding = its residual), others unchanged |
 | equivalent twists, BTO 22–113° | `rotation` merges 22.62° and 112.62°, keeps 67.38°; `rotation+mirror` also merges 67.38° |
-| strained scan fix, PTO/STO 1–45° | STO ≤ 1 %: 80 exact cells (was 21); 1 %/1 %: 116 (was 0); 2 %/2 %: 169 |
+| strained scan fix, PTO/STO 1–45° | STO ≤ 1 %: 80 exact cells (was 21); 1 %/1 %: 116 (was 3; none in a 5–10° window); 2 %/2 %: 169 |
 
 ### 9.4 Checks on written structures
 
