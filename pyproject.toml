@@ -10,3 +10,7 @@ testpaths = ["tests"]
 markers = [
     "slow: long-running reproduction checks (deselect with '-m \"not slow\"')",
 ]
+filterwarnings = [
+    # ASE (3.29) still sets array.shape, deprecated in NumPy 2.5; not our code.
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
+]

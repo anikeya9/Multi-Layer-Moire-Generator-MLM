@@ -19,7 +19,7 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from MLM.build import FORMATS, write_structure
+from MLM.build import FORMATS, check_structure, write_structure
 from MLM.index import find, get, lineage
 from MLM.spec import run_stack_spec
 
@@ -64,9 +64,16 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 def _cmd_write(args: argparse.Namespace) -> int:
     path = write_structure(args.run_dir, args.id, fmt=args.fmt, out=args.out,
-                           interlayer_gap=args.gap, vacuum=args.vacuum)
+                           interlayer_gap=args.gap, vacuum=args.vacuum, check=False)
     print(path)
+    print(check_structure(args.run_dir, args.id, interlayer_gap=args.gap, vacuum=args.vacuum))
     return 0
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    report = check_structure(args.run_dir, args.id, interlayer_gap=args.gap, vacuum=args.vacuum)
+    print(report)
+    return 0 if report.ok else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--gap", type=float, default=3.0, help="interlayer gap in Å (default 3)")
     write.add_argument("--vacuum", type=float, default=50.0, help="vacuum along c in Å (default 50)")
     write.set_defaults(handler=_cmd_write)
+
+    check = commands.add_parser("check", help="rebuild one structure and run the sanity checks")
+    check.add_argument("run_dir", type=Path)
+    check.add_argument("id")
+    check.add_argument("--gap", type=float, default=3.0, help="interlayer gap in Å (default 3)")
+    check.add_argument("--vacuum", type=float, default=50.0, help="vacuum along c in Å (default 50)")
+    check.set_defaults(handler=_cmd_check)
     return parser
 
 

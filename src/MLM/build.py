@@ -28,7 +28,7 @@ import math
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -167,6 +167,8 @@ def build_atoms(
     vacuum: float = 50.0,
     fold_tolerance: Optional[float] = None,
     search_dirs: Sequence[PathLike] = (),
+    shifts: Optional[Sequence[Optional[Sequence[float]]]] = None,
+    poisson_ratios: Optional[Sequence[Optional[float]]] = None,
 ) -> BuiltStructure:
     """Atoms of ``record``'s moiré cell.
 
@@ -178,6 +180,14 @@ def build_atoms(
     - ``fold_tolerance``: ``dtol`` for ``select_atoms_fractional``; defaults to the
       cell's worst per-layer residual (the notebooks passed the step's ``delvec``).
 
+    - ``shifts``: per layer, an in-plane translation ``(s1, s2)`` in fractional
+      coordinates of that layer's own (strained) primitive cell, applied before the
+      rotation (``None`` or ``(0, 0)`` = no shift). Stacking registry, e.g. AB stacking of
+      hexagonal layers = ``(1/3, 2/3)``. A translation does not change commensurability.
+    - ``poisson_ratios``: per layer, ν for the thickness response to in-plane strain:
+      ε_zz = −ν/(1−ν)·(ε_xx + ε_yy) (thin isotropic film under biaxial in-plane stress),
+      applied about the middle of the layer. ``None`` = thickness unchanged.
+
     Each layer is strained by its ``record.layer_strains`` tensor (in its own frame)
     before it is rotated, so strained layers fit the cell exactly.
 
@@ -186,15 +196,23 @@ def build_atoms(
     (True, {'Ba': 390, 'O': 780, 'Ti': 195})
     """
     rotations = list(record.layer_rotations if rotations is None else rotations)
+    shifts = _per_layer(shifts, record.n_layers, "shifts")
+    poisson_ratios = _per_layer(poisson_ratios, record.n_layers, "poisson_ratios")
     a1, a2 = record.lattice_vectors
-    radius = float(np.linalg.norm(a1) + np.linalg.norm(a2))  # farthest cell corner from the origin
+    strains = record.strain_tensors()
+    displacements = [_shift_vector(poscar, shift, strain, search_dirs)
+                     for poscar, shift, strain in zip(record.source_poscar, shifts, strains)]
+    # farthest cell corner from the origin, plus the largest shift
+    radius = float(np.linalg.norm(a1) + np.linalg.norm(a2) + max(np.linalg.norm(d) for d in displacements))
 
     layers = []
     expected_counts = []
     top_of_previous: Optional[float] = None
-    strains = record.strain_tensors()
     for position, (poscar, angle) in enumerate(zip(record.source_poscar, rotations)):
         frame, atoms_per_cell = _replicated_layer(poscar, radius, search_dirs, strains[position])
+        frame = _poisson_z(frame, strains[position], poisson_ratios[position])
+        frame["x"] = frame["x"] + displacements[position][0]
+        frame["y"] = frame["y"] + displacements[position][1]
         if top_of_previous is not None:
             frame["z"] = frame["z"] + interlayer_gap + top_of_previous
         top_of_previous = float(frame["z"].max())
@@ -223,6 +241,39 @@ def build_atoms(
     return built
 
 
+def _per_layer(values: Optional[Sequence[Any]], n_layers: int, name: str) -> list[Any]:
+    """One entry per layer (``None`` → all ``None``); raise if the length is wrong."""
+    if values is None:
+        return [None] * n_layers
+    values = list(values)
+    if len(values) != n_layers:
+        raise ValueError(f"{name} needs one entry per layer ({n_layers}), got {len(values)}")
+    return values
+
+
+def _shift_vector(poscar: str, shift: Optional[Sequence[float]], strain: np.ndarray,
+                  search_dirs: Sequence[PathLike]) -> np.ndarray:
+    """Cartesian (own-frame) displacement for a fractional shift of the strained primitive cell."""
+    if shift is None:
+        return np.zeros(2)
+    s1, s2 = (float(value) for value in shift)
+    in_plane = read_primitive(poscar, search_dirs)["in_plane"] @ (np.eye(2) + strain).T  # rows: strained a, b
+    return s1 * in_plane[0] + s2 * in_plane[1]
+
+
+def _poisson_z(frame: pd.DataFrame, strain: np.ndarray, nu: Optional[float]) -> pd.DataFrame:
+    """Scale the layer thickness by (1 + ε_zz), ε_zz = −ν/(1−ν)·tr(ε), about the layer's middle."""
+    if nu is None or not np.any(strain):
+        return frame
+    if not -1.0 < nu < 0.5:
+        raise ValueError(f"Poisson ratio must lie in (-1, 0.5), got {nu}")
+    eps_zz = -nu / (1.0 - nu) * float(strain[0, 0] + strain[1, 1])
+    middle = 0.5 * (frame["z"].min() + frame["z"].max())
+    scaled = frame.copy()
+    scaled["z"] = middle + (frame["z"] - middle) * (1.0 + eps_zz)
+    return scaled
+
+
 # ---------------------------------------------------------------------------
 # Writing files
 # ---------------------------------------------------------------------------
@@ -245,28 +296,33 @@ def write_structure(
     interlayer_gap: float = 3.0,
     vacuum: float = 50.0,
     search_dirs: Optional[Sequence[PathLike]] = None,
+    shifts: Optional[Sequence[Optional[Sequence[float]]]] = None,
+    poisson_ratios: Optional[Sequence[Optional[float]]] = None,
+    check: bool = True,
 ) -> Path:
     """Rebuild the atoms of ``structure_id`` from its recipe and write a file.
 
     ``fmt`` is ``"vasp"`` (POSCAR, Cartesian, via ASE) or ``"lammps"`` (LAMMPS data
     file, ``atom_style atomic``). ``out`` defaults to
-    ``<run_dir>/structures/<id>.vasp`` (or ``.data``).
+    ``<run_dir>/structures/<id>.vasp`` (or ``.data``). ``shifts`` and
+    ``poisson_ratios`` as in :func:`build_atoms`. With ``check=True`` (default) the
+    atoms are checked first (:func:`MLM.checks.check_built`) and a ``RuntimeWarning``
+    describes any failed check; :func:`check_structure` returns the full report.
 
     >>> write_structure("runs/bto_trilayer_demo", trilayer_id, fmt="lammps")   # doctest: +SKIP
     PosixPath('runs/bto_trilayer_demo/structures/bto_3_22.62_36.87_015688.data')
     """
     if fmt not in FORMATS:
         raise ValueError(f"fmt must be one of {sorted(FORMATS)}, got {fmt!r}")
-    record = get(run_dir, structure_id)
-    rotations = rotations_from_lineage(run_dir, structure_id)
-    if not np.allclose(rotations, record.layer_rotations, atol=1e-9):
-        raise ValueError(
-            f"{structure_id}: stored layer_rotations {record.layer_rotations} disagree with the "
-            f"lineage ({rotations}); the run directory is inconsistent."
-        )
     if search_dirs is None:
         search_dirs = default_search_dirs(run_dir)
-    built = build_atoms(record, rotations, interlayer_gap, vacuum, search_dirs=search_dirs)
+    built = _build_from_run(run_dir, structure_id, interlayer_gap, vacuum, search_dirs, shifts, poisson_ratios)
+    if check:
+        from MLM.checks import check_built
+
+        report = check_built(built, search_dirs=search_dirs, symmetry=False)
+        if not report.ok:
+            warnings.warn(f"{structure_id}: {report}", RuntimeWarning, stacklevel=2)
 
     out = Path(out) if out is not None else Path(run_dir) / "structures" / f"{structure_id}{FORMATS[fmt]}"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -277,3 +333,39 @@ def write_structure(
     else:
         sw.write_lammps_ase(str(out), a1, a2, a3, atoms)
     return out
+
+
+def _build_from_run(run_dir, structure_id, interlayer_gap, vacuum, search_dirs, shifts, poisson_ratios):
+    """Load a recipe, check its rotations against the lineage and build its atoms."""
+    record = get(run_dir, structure_id)
+    rotations = rotations_from_lineage(run_dir, structure_id)
+    if not np.allclose(rotations, record.layer_rotations, atol=1e-9):
+        raise ValueError(
+            f"{structure_id}: stored layer_rotations {record.layer_rotations} disagree with the "
+            f"lineage ({rotations}); the run directory is inconsistent."
+        )
+    return build_atoms(record, rotations, interlayer_gap, vacuum, search_dirs=search_dirs,
+                       shifts=shifts, poisson_ratios=poisson_ratios)
+
+
+def check_structure(
+    run_dir: PathLike,
+    structure_id: str,
+    interlayer_gap: float = 3.0,
+    vacuum: float = 50.0,
+    search_dirs: Optional[Sequence[PathLike]] = None,
+    shifts: Optional[Sequence[Optional[Sequence[float]]]] = None,
+    poisson_ratios: Optional[Sequence[Optional[float]]] = None,
+):
+    """Build a structure exactly as :func:`write_structure` would and return its
+    :class:`MLM.checks.CheckReport` (including the space group, if spglib is installed).
+
+    >>> print(check_structure("runs/bto_trilayer_demo", trilayer_id))   # doctest: +SKIP
+    """
+    from MLM.checks import check_built
+
+    if search_dirs is None:
+        search_dirs = default_search_dirs(run_dir)
+    built = _build_from_run(run_dir, structure_id, interlayer_gap, vacuum, search_dirs, shifts, poisson_ratios)
+    return check_built(built, search_dirs=search_dirs)
+
