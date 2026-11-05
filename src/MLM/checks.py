@@ -60,6 +60,15 @@ def to_ase(built: Any) -> Atoms:
                  cell=built.cell, pbc=True)
 
 
+def _subset(atoms: Atoms, indices: np.ndarray) -> Atoms:
+    """The atoms at ``indices`` as a new ``Atoms`` object (same cell and periodicity)."""
+    subset = atoms.copy()
+    keep = np.zeros(len(atoms), dtype=bool)
+    keep[indices] = True
+    del subset[np.nonzero(~keep)[0]]
+    return subset
+
+
 def _closest_pair(atoms: Atoms, cutoff: float) -> Optional[float]:
     if len(atoms) < 2:
         return None
@@ -134,7 +143,7 @@ def check_built(
     report.info["layers"] = []
     for layer in range(record.n_layers):
         mask = layer_of_atom == layer
-        inside = _closest_pair(atoms[np.nonzero(mask)[0]], cutoff=6.0)
+        inside = _closest_pair(_subset(atoms, np.nonzero(mask)[0]), cutoff=6.0)
         reference = _primitive_min_distance(record.source_poscar[layer], strains[layer], search_dirs)
         report.info["layers"].append({"layer": layer + 1, "min_distance": inside, "primitive": reference})
         if inside is not None and reference is not None and abs(inside - reference) > distance_tol:

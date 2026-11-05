@@ -49,7 +49,9 @@ ignore = [
 [tool.mypy]
 python_version = "3.10"
 files = ["src/MLM"]
-exclude = ["src/MLM/match\\.py", "src/MLM/moire_lattice_vector_finder\\.py", "src/MLM/structure_writer\\.py"]
+# The original modules are not type-annotated; they are kept as they are.
+exclude = ["src/MLM/match\\.py", "src/MLM/moire_lattice_vector_finder\\.py", "src/MLM/structure_writer\\.py",
+           "src/MLM/angle_between\\.py"]
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_unused_ignores = true

@@ -2,10 +2,10 @@
 # Run from the repository root:
 #     python -c "from MLM.spec import run_stack_spec; print(run_stack_spec('examples/bto_trilayer_demo.yaml').summary())"
 #
+# Every twist is measured from the layer directly below (layer 3 vs layer 2 here).
 # The angle windows are narrow (a few degrees) so the demo finishes in seconds.
-# For a full landscape scan use degmin 1, degmax 45 in round 1 and
-# `window_relative_to: lower_top_layer` with degmin 1, degmax 60.01 in round 2
-# (the notebook settings) — that takes ~3 minutes per bilayer candidate.
+# For a full landscape scan use degmin 1, degmax 45 in round 1 and degmin 1,
+# degmax 60.01 in round 2 (the notebook settings) — ~3 minutes per bilayer candidate.
 name: bto_trilayer_demo
 output_dir: runs/bto_trilayer_demo
 layers:

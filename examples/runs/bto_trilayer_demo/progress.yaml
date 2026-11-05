@@ -1,0 +1,54 @@
+job:
+  filters:
+    max_cumulative_residual: null
+    max_layer_residual: null
+    max_length_mismatch: null
+    max_residual: 0.001
+    max_strain_energy: null
+  layers:
+  - material: bto
+    poscar: moire_structures/bto/bto_1-layer.vasp
+  - material: bto
+    poscar: moire_structures/bto/bto_1-layer.vasp
+  - material: bto
+    poscar: moire_structures/bto/bto_1-layer.vasp
+  search:
+    default:
+      angle_cluster_tol: null
+      dedupe: true
+      degmax: 24.0
+      degmin: 20.0
+      degstep: 0.01
+      dtol: 0.0005
+      goodangles:
+      - 90.0
+      include_axes: false
+      keep_supercells: false
+      max_matches_per_angle: auto
+      merge_equivalent_twists: none
+      nmax: 10
+      nmin: -10
+      scanner: fast
+      strain_mode: isotropic
+      strain_residual_tol: 1.0e-06
+    interfaces: {}
+    rounds:
+      2:
+        degmax: 38.0
+        degmin: 35.0
+        nmax: 40
+        nmin: -40
+completed:
+- round: 1
+  step: L1 + L2 -> L1-2
+  passed:
+  - bto_2_22.62_1fdb6f
+  found: 1
+  seconds: 0.024
+- round: 2
+  step: L1-2 + L3 -> L1-3
+  passed:
+  - bto_3_22.62_35.30_4f0401
+  - bto_3_22.62_36.87_015688
+  found: 3
+  seconds: 0.513

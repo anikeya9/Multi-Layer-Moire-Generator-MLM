@@ -87,10 +87,10 @@ def scan_angles(
     """
     points = lattice_points(nmin, nmax, include_axes)
     lower_points = A @ points  # all lower lattice points, Cartesian (2 x P)
-    angles = np.asarray(angles, dtype=float)
+    all_angles = np.asarray(angles, dtype=float)
     rows: list[dict[str, Any]] = []
-    for start in range(0, len(angles), ANGLE_CHUNK):
-        chunk = angles[start:start + ANGLE_CHUNK]
+    for start in range(0, len(all_angles), ANGLE_CHUNK):
+        chunk = all_angles[start:start + ANGLE_CHUNK]
         B = _rotation_stack(chunk) @ G  # rotated upper lattice for every angle (T, 2, 2)
         targets = np.broadcast_to(lower_points, (len(chunk),) + lower_points.shape)
         solution = np.linalg.solve(B, targets)  # coordinates in the rotated upper basis

@@ -22,3 +22,10 @@ coefficients:
   upper:
   - [-2, 3]
   - [-3, -2]
+layer_strains:
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+strain_energy: null
+schema_version: 3

@@ -16,3 +16,8 @@ twist_sequence: []
 layer_rotations: [0.0]
 layer_residuals: null
 coefficients: null
+layer_strains:
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+strain_energy: null
+schema_version: 3
