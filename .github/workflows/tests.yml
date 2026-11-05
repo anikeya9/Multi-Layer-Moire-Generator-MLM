@@ -32,10 +32,7 @@ jobs:
         run: mypy
 
       - name: match.py is unchanged (reference implementation)
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --depth=1 origin "${{ github.base_ref }}"
-          git diff --quiet "origin/${{ github.base_ref }}" -- src/MLM/match.py
+        run: python dev/check_match_unchanged.py
 
       - name: Tests
         env:

@@ -23,6 +23,9 @@ filterwarnings = [
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# Apply the excludes below even to files passed explicitly (pre-commit passes file names);
+# without this, `ruff check --fix` in the hook would rewrite match.py.
+force-exclude = true
 # The original modules are kept as they are (match.py must not change).
 extend-exclude = [
     "src/MLM/match.py",

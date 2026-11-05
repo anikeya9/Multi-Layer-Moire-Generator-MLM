@@ -75,8 +75,11 @@
 # theta = 22.62*np.pi/180 # degrees
 
 import numpy as np
-import polars as pl
 from tqdm import tqdm
+
+import polars as pl
+
+from icecream import ic
 
 #from tool import angle_in_degrees
 
@@ -154,7 +157,7 @@ def scan(A, G, theta, tol, xlim, ylim):
 
 
 def run(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax):
-
+    
     A = np.array([a1,a2]).T
     G = np.array([g1,g2]).T
 
@@ -181,41 +184,41 @@ def filtermatches(a1,a2,df,goodangle=90.0):
     for ang in df["angle"].unique():
         angdf = df.filter(df["angle"]==ang)
         N = angdf["n1","n2"].to_numpy()
-
+        
         V = N @ A.T
         V /= np.linalg.norm(V, axis=1, keepdims=True)
         dot =  V @ V.T
         cos = np.cos(np.deg2rad(goodangle))
         #if np.isclose(ang,27.8):
         #    print(angdf[0:10])
-
-
+        
+        
         ix,iy = np.where( np.isclose(dot, cos, rtol=1e-3) )
-
+        
         indpairs = list(zip(ix,iy))
 
         for p in indpairs:
             a,b = p
-            delta = np.rad2deg(np.acos(dot[a,b])) - goodangle
+            delta = np.rad2deg(np.acos(dot[a,b])) - goodangle 
             results.append([angdf.row(a,named=True),angdf.row(b,named=True),{"delgoodangle":delta}])
 
     return results
 
 
 def run_and_filter(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax, goodangles):
-
+    
     df = run(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax)
-
+    
     allresults = []
-
+    
     if df.height == 0:
         return allresults
-
+    
     for good_angle in goodangles:
-
+        
         results = filtermatches(a1,a2,df,good_angle)
-
-        allresults.append({
+        
+        allresults.append({ 
                         "goodangle":good_angle,
                         "results": results,
                            })
