@@ -40,7 +40,8 @@ fast example (the whole notebook runs in about two minutes):
 | 11 | Recipes, schema versions and reproducibility; the command line |
 | 12 | The graphical interface |
 
-**Before running:** `pip install -e ".[gui,checks]"` in the repository (once per environment).
+**Before running:** `pip install -e ".[all]"` in the repository (once per environment; it
+installs MLM with the GUI, checks and JupyterLab).
 Everything this notebook writes goes to `runs/feature_tour/`.
 
 **Angle convention:** a twist is the anticlockwise rotation of a layer relative to the layer

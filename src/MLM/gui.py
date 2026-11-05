@@ -65,7 +65,7 @@ def _widgets():
     try:
         import ipywidgets
     except ImportError as error:  # pragma: no cover - depends on the environment
-        raise ImportError("the GUI needs ipywidgets: pip install 'MLM[gui]'") from error
+        raise ImportError("the GUI needs ipywidgets: pip install -e '.[gui]'") from error
     return ipywidgets
 
 
@@ -714,7 +714,7 @@ def launch(port: Optional[int] = None, open_browser: bool = True) -> int:
         raise FileNotFoundError(f"{notebook} not found; run `mlm gui` inside the MLM repository")
     voila = shutil.which("voila")
     if voila is None:
-        raise RuntimeError("Voilà is not installed: pip install 'MLM[gui]'")
+        raise RuntimeError("Voilà is not installed: pip install -e '.[gui]'")
     command = [voila, str(notebook), f"--Voila.root_dir={root}"]
     if port is not None:
         command.append(f"--port={port}")

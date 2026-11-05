@@ -70,7 +70,7 @@ Heterostructures can be strained to exact matches: give a layer a `strain` limit
 
 **Getting started**  
 ```
-pip install -e ".[gui,checks]"
+pip install -e ".[all]"
 ```
 Then open `notebooks/feature_tour.ipynb` (every feature, with short explanations; runs in ~2 minutes), `notebooks/moire_stack_explorer.ipynb` (your own stack in one input cell), or the GUI below.  
 
