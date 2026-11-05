@@ -46,7 +46,7 @@ from MLM.search import Filters, SearchParams, SearchSchedule, StackResult, build
 from MLM.structure import MoireStructure, PathLike
 
 TOP_LEVEL_KEYS = {"name", "output_dir", "layers", "search", "filters"}
-LAYER_KEYS = {"poscar", "material", "strain"}
+LAYER_KEYS = {"poscar", "material", "strain", "young", "poisson"}
 REQUIRED_LAYER_KEYS = {"poscar", "material"}
 SEARCH_KEYS = {"default", "rounds", "interfaces"}
 
@@ -61,6 +61,16 @@ class LayerSpec:
     poscar: str
     material: str
     strain: float = 0.0
+    young: Optional[float] = None    # 2D Young's modulus, N/m (optional)
+    poisson: Optional[float] = None  # Poisson ratio (optional; default 0 if young is given)
+
+    def elastic(self):
+        """:class:`MLM.strain.Elastic` for this layer, or ``None`` if ``young`` is not given."""
+        from MLM.strain import Elastic
+
+        if self.young is None:
+            return None
+        return Elastic(young=self.young, poisson=self.poisson or 0.0)
 
 
 @dataclass
@@ -140,7 +150,12 @@ def parse_stack_spec(data: dict[str, Any], source_path: Optional[Path] = None) -
         strain = float(layer.get("strain") or 0.0)
         if strain < 0:
             raise ValueError(f"stack spec: layers[{position}].strain must be >= 0 (percent), got {strain}")
-        layers.append(LayerSpec(poscar=str(layer["poscar"]), material=str(layer["material"]), strain=strain))
+        young = layer.get("young")
+        poisson = layer.get("poisson")
+        layers.append(LayerSpec(poscar=str(layer["poscar"]), material=str(layer["material"]), strain=strain,
+                                young=None if young is None else float(young),
+                                poisson=None if poisson is None else float(poisson)))
+        layers[-1].elastic()  # validate the constants early
     if not layers:
         raise ValueError("stack spec: 'layers' must list at least one layer")
     name = str(data["name"])
@@ -197,6 +212,8 @@ def run_stack_spec(
         spec={},  # we copy the original file instead (keeps the user's comments)
         log=log,
         strain_limits=[layer.strain for layer in spec.layers],
+        elastic=([layer.elastic() for layer in spec.layers]
+                 if any(layer.young is not None for layer in spec.layers) else None),
         workers=workers,
         resume=resume,
         index_format=index_format,

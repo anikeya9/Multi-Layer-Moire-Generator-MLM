@@ -76,10 +76,14 @@ def scan_angles(
     nmax: int,
     include_axes: bool = False,
     max_per_angle: Optional[int] = 25,
+    relative_tol: float = 0.0,
 ) -> list[dict[str, Any]]:
     """All matches for every angle in ``angles`` (rows like ``match.scan`` + ``"angle"``).
 
     ``A``, ``G``: 2x2 matrices whose *columns* are the lower and upper lattice vectors.
+    A point matches if both fractional errors are below ``tol + relative_tol · |m|``
+    (``relative_tol = 0``: exactly ``match.scan``'s criterion). A strain ε moves the
+    upper coordinates by about ε·|m|, so strained searches use ``relative_tol ≈ ε``.
     """
     points = lattice_points(nmin, nmax, include_axes)
     lower_points = A @ points  # all lower lattice points, Cartesian (2 x P)
@@ -92,7 +96,8 @@ def scan_angles(
         solution = np.linalg.solve(B, targets)  # coordinates in the rotated upper basis
         rounded = np.round(solution)
         fraction = solution - rounded
-        is_match = (np.abs(fraction[:, 0, :]) < tol) & (np.abs(fraction[:, 1, :]) < tol)
+        limit = tol if not relative_tol else tol + relative_tol * np.linalg.norm(solution, axis=1)
+        is_match = (np.abs(fraction[:, 0, :]) < limit) & (np.abs(fraction[:, 1, :]) < limit)
         for t in np.nonzero(is_match.any(axis=1))[0]:
             rows.extend(_rows_for_angle(chunk[t], A, B[t], points, solution[t], rounded[t], fraction[t],
                                         np.nonzero(is_match[t])[0], max_per_angle))
@@ -124,19 +129,20 @@ def _rows_for_angle(angle, A, B, points, solution, rounded, fraction, columns, m
 
 
 def run(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax,
-        include_axes: bool = False, max_per_angle: Optional[int] = 25) -> pl.DataFrame:
-    """Drop-in for ``match.run`` (same arguments, same DataFrame), plus the two options."""
+        include_axes: bool = False, max_per_angle: Optional[int] = 25, relative_tol: float = 0.0) -> pl.DataFrame:
+    """Drop-in for ``match.run`` (same arguments, same DataFrame), plus the options."""
     A = np.array([a1, a2]).T
     G = np.array([g1, g2]).T
     angles = np.arange(degmin, degmax, degstep)
     angles = angles[angles != 0]  # match.run skips exactly 0
-    return pl.DataFrame(scan_angles(A, G, angles, dtol, nmin, nmax, include_axes, max_per_angle))
+    return pl.DataFrame(scan_angles(A, G, angles, dtol, nmin, nmax, include_axes, max_per_angle, relative_tol))
 
 
 def run_and_filter(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax, goodangles,
-                   include_axes: bool = False, max_per_angle: Optional[int] = 25) -> list[dict[str, Any]]:
+                   include_axes: bool = False, max_per_angle: Optional[int] = 25,
+                   relative_tol: float = 0.0) -> list[dict[str, Any]]:
     """Drop-in for ``match.run_and_filter``; the filtering is ``match.filtermatches`` itself."""
-    df = run(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax, include_axes, max_per_angle)
+    df = run(a1, a2, g1, g2, degmin, degmax, degstep, dtol, nmin, nmax, include_axes, max_per_angle, relative_tol)
     if df.height == 0:
         return []
     return [{"goodangle": good_angle, "results": filtermatches(a1, a2, df, good_angle)}

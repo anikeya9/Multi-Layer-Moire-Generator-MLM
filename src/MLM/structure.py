@@ -66,6 +66,7 @@ SCHEMA_KEYS: tuple[str, ...] = (
     "layer_residuals",
     "coefficients",
     "layer_strains",
+    "strain_energy",
     "schema_version",
 )
 
@@ -74,7 +75,8 @@ SCHEMA_KEYS: tuple[str, ...] = (
 #:
 #: - 1: the original schema (no ``layer_strains``, no ``schema_version`` key)
 #: - 2: ``layer_strains`` (heterostrain) and ``schema_version`` added
-SCHEMA_VERSION = 2
+#: - 3: ``strain_energy`` (meV/Å², from per-layer elastic constants) added
+SCHEMA_VERSION = 3
 
 #: Number of hex characters of the sha1 hash used in the id.
 HASH_LENGTH = 6
@@ -136,7 +138,7 @@ def migrate_record(data: dict[str, Any]) -> dict[str, Any]:
     one version; the input dict is not modified.
 
     >>> migrate_record({"n_layers": 1})["layer_strains"], migrate_record({"n_layers": 1})["schema_version"]
-    ([[[0.0, 0.0], [0.0, 0.0]]], 2)
+    ([[[0.0, 0.0], [0.0, 0.0]]], 3)
     """
     data = dict(data)
     version = int(data.get("schema_version", 1))
@@ -146,6 +148,9 @@ def migrate_record(data: dict[str, Any]) -> dict[str, Any]:
     if version < 2:  # 1 -> 2: layer_strains added (unstrained = zeros)
         data.setdefault("layer_strains", [[[0.0, 0.0], [0.0, 0.0]] for _ in range(int(data["n_layers"]))])
         version = 2
+    if version < 3:  # 2 -> 3: strain_energy added (unknown = null)
+        data.setdefault("strain_energy", None)
+        version = 3
     data["schema_version"] = version
     return data
 
@@ -260,6 +265,7 @@ class MoireStructure:
     layer_residuals: Optional[list[float]] = None
     coefficients: Optional[dict[str, list[list[int]]]] = None
     layer_strains: Optional[list[list[list[float]]]] = None
+    strain_energy: Optional[float] = None
     id: str = ""
 
     def __post_init__(self) -> None:
@@ -382,6 +388,7 @@ class MoireStructure:
             "layer_residuals": self.layer_residuals,
             "coefficients": self.coefficients,
             "layer_strains": [[list(row) for row in tensor] for tensor in self.layer_strains],
+            "strain_energy": None if self.strain_energy is None else float(self.strain_energy),
             "schema_version": SCHEMA_VERSION,
         }
         return _to_builtin(data)
@@ -419,6 +426,8 @@ class MoireStructure:
         content.pop("schema_version")  # file-format metadata, not content: ids survive upgrades
         if not self.is_strained:
             content.pop("layer_strains")
+        if content.get("strain_energy") is None:  # only hashed when known: older ids unchanged
+            content.pop("strain_energy")
         canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:HASH_LENGTH]
 

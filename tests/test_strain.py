@@ -213,6 +213,65 @@ def test_cells_that_strain_cannot_close_are_dropped(pto, sto):
     the aspect ratio (best fit leaves 0.88 Å), so it is not a strained match."""
     params = SearchParams(degmin=44.5, degmax=45.0, degstep=0.1, nmin=-10, nmax=10)
     assert find_candidates(pto, sto, params, strain_limits=(0.0, 1.0)) == []
-    loose = SearchParams(degmin=44.5, degmax=45.0, degstep=0.1, nmin=-10, nmax=10, strain_residual_tol=1.0)
+    # The "match" scanner widens one global tolerance, which lets this junk cell through
+    # the scan; the fast scanner's |m|-proportional tolerance does not even propose it.
+    loose = SearchParams(degmin=44.5, degmax=45.0, degstep=0.1, nmin=-10, nmax=10, strain_residual_tol=1.0,
+                         scanner="match")
     kept = find_candidates(pto, sto, loose, strain_limits=(0.0, 1.0))
     assert kept and min(c.residual for c in kept) > 0.5
+
+
+# --- elastic constants: energy-weighted sharing and strain energy ------------------------
+def test_stiffer_layer_strains_less():
+    from MLM.strain import Elastic
+
+    soft, stiff = Elastic(young=100.0, poisson=0.25), Elastic(young=300.0, poisson=0.25)
+    fit = fit_strain(CELL @ SQUARE_PTO, SQUARE_STO, CELL, 0.0, "isotropic", 0.02, 0.02, soft, stiff)
+    lower, upper = fit.lower_strain[0, 0], fit.upper_strain[0, 0]
+    assert fit.residual < 1e-9
+    assert abs(lower) / abs(upper) == pytest.approx(3.0, rel=0.01)  # energy minimum: ε ∝ 1/Y
+    equal = fit_strain(CELL @ SQUARE_PTO, SQUARE_STO, CELL, 0.0, "isotropic", 0.02, 0.02, soft, soft)
+    assert abs(equal.lower_strain[0, 0]) == pytest.approx(abs(equal.upper_strain[0, 0]), rel=0.01)
+
+
+def test_energy_density_formula():
+    from MLM.strain import J_PER_M2_IN_MEV_PER_A2, Elastic, strain_energy
+
+    constants = Elastic(young=100.0, poisson=0.25)
+    e = 0.01
+    biaxial = constants.energy_density(np.eye(2) * e)
+    assert biaxial == pytest.approx(100.0 / (1 - 0.25) * e ** 2)  # isotropic: W = Y/(1−ν) e²
+    shear = constants.energy_density(np.array([[0.0, e], [e, 0.0]]))
+    assert shear == pytest.approx(100.0 / (1 + 0.25) * e ** 2)  # pure shear: W = G·(2ε_xy)²/2, G = Y/(2(1+ν))
+    total = strain_energy([np.eye(2) * e, np.zeros((2, 2))], [constants, constants])
+    assert total == pytest.approx(biaxial * J_PER_M2_IN_MEV_PER_A2)
+    assert strain_energy([np.zeros((2, 2))], [None]) is None
+    with pytest.raises(ValueError):
+        Elastic(young=-1.0)
+
+
+def test_strain_energy_in_records_index_and_filters(pto, sto, tmp_path):
+    from MLM.strain import Elastic
+
+    elastic = [Elastic(young=150.0, poisson=0.3), Elastic(young=150.0, poisson=0.3)]
+    schedule = SearchSchedule(SearchParams(degmin=5.0, degmax=10.0, degstep=0.1, nmin=-10, nmax=10))
+    result = build_stack([pto, sto], schedule, Filters(max_strain_energy=0.5), run_dir=tmp_path, log=None,
+                         strain_limits=[1.0, 1.0], elastic=elastic)
+    table = load_index(tmp_path)
+    bilayers = table[table["n_layers"] == 2]
+    assert bilayers["strain_energy"].notna().all() and (bilayers["strain_energy"] > 0).all()
+    assert all(record.strain_energy <= 0.5 for record in result.final)
+    assert (~bilayers["passed_filter"]).any()  # the energy filter rejected some
+    lowest = find(tmp_path, n_layers=2, max_strain_energy=0.05)
+    assert (lowest["strain_energy"] <= 0.05).all()
+    spec = yaml.safe_load((tmp_path / "stack_spec.yaml").read_text())
+    assert spec["layers"][0]["young"] == 150.0 and spec["layers"][1]["poisson"] == 0.3
+    # Spec route: young/poisson per layer
+    parsed = parse_stack_spec(dict(spec, output_dir=str(tmp_path / "again")))
+    assert parsed.layers[1].elastic() == Elastic(young=150.0, poisson=0.3)
+
+
+def test_unstrained_records_without_constants_keep_ids():
+    bto = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
+    (bilayer,) = find_candidates(bto, bto, SearchParams(degmin=22.0, degmax=23.0))
+    assert bilayer.strain_energy is None and bilayer.id == "bto_2_22.62_1fdb6f"

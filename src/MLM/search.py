@@ -29,7 +29,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import yaml
@@ -38,12 +38,15 @@ from MLM.index import SPEC_FILENAME, RunStore, get
 from MLM.runinfo import RunInfo
 from MLM import fastscan
 from MLM.match import run_and_filter
-from MLM.strain import STRAIN_MODES, fit_strain, scan_tolerance, strain_magnitude
+from MLM.strain import STRAIN_MODES, Elastic, fit_strain, scan_tolerance, strain_energy, strain_magnitude
 from MLM.structure import MoireStructure, PathLike, read_primitive
 
 # ===========================================================================
 # 1. Parameters and filters
 # ===========================================================================
+
+#: Per-angle match cap used by ``max_matches_per_angle="auto"`` in strained searches.
+STRAINED_MATCHES_PER_ANGLE = 200
 
 #: Allowed values of ``SearchParams.scanner``.
 SCANNERS = ("fast", "match")
@@ -80,8 +83,13 @@ class SearchParams:
       ``match.run_and_filter`` itself (the reference implementation).
     - ``include_axes`` — also try lattice points with a zero coefficient (``n = (k, 0)``),
       which ``match.scan`` skips (``"fast"`` scanner only).
-    - ``max_matches_per_angle`` — ``match.scan`` keeps the 25 shortest matches per angle;
-      a larger number or ``None`` keeps more (``"fast"`` scanner only).
+    - ``max_matches_per_angle`` — ``"auto"`` (default): 25 like ``match.scan`` for rigid
+      searches, :data:`STRAINED_MATCHES_PER_ANGLE` (200) for strained ones; or an integer,
+      or ``None`` for unlimited (``"fast"`` scanner only). With strain ε *any* cell larger
+      than about a/ε can be matched, so the list per angle grows without bound with the n
+      range; 25 would crowd out the longer, less strained cells, unlimited explodes in
+      later rounds (PTO/STO/PTO round 2: 1.5 s with 200, ~2 min unlimited). In round 1,
+      200 finds every cell at 1 %/1 % limits and ~80 % at 2 %/2 %.
     - ``strain_residual_tol`` — Å; a strained cell is accepted only if straining closes
       it to within this (the point of straining is a perfect match). Mainly matters for
       ``isotropic``/``axial``, which cannot fix a mismatch in cell *shape*.
@@ -104,7 +112,7 @@ class SearchParams:
     strain_residual_tol: float = 1e-6
     scanner: str = "fast"
     include_axes: bool = False
-    max_matches_per_angle: Optional[int] = 25
+    max_matches_per_angle: Union[int, None, str] = "auto"
 
     def __post_init__(self) -> None:
         # Accept lists from YAML but store an (immutable, hashable) tuple.
@@ -113,7 +121,11 @@ class SearchParams:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
         if self.scanner not in SCANNERS:
             raise ValueError(f"scanner must be one of {SCANNERS}, got {self.scanner!r}")
-        if self.scanner == "match" and (self.include_axes or self.max_matches_per_angle != 25):
+        if self.max_matches_per_angle is not None and self.max_matches_per_angle != "auto" \
+                and not (isinstance(self.max_matches_per_angle, int) and self.max_matches_per_angle > 0):
+            raise ValueError(f"max_matches_per_angle must be 'auto', None or a positive integer, "
+                             f"got {self.max_matches_per_angle!r}")
+        if self.scanner == "match" and (self.include_axes or self.max_matches_per_angle not in ("auto", 25)):
             raise ValueError("include_axes / max_matches_per_angle need scanner='fast' "
                              "(match.scan has them built in: no axes, 25 matches per angle)")
         if self.strain_mode not in STRAIN_MODES:
@@ -173,6 +185,7 @@ class Filters:
       an imperfect cell is multiplied up in later rounds (important for heterostructures).
     - ``max_length_mismatch`` — max | |a1| − |a2| | (Å); the notebooks used 0.1 to keep
       cells with equal-length vectors. ``None`` disables it.
+    - ``max_strain_energy`` — meV/Å²; only applied where elastic constants are known.
 
     >>> Filters(max_residual=1e-3).passes(candidate)   # doctest: +SKIP
     True
@@ -182,6 +195,7 @@ class Filters:
     max_cumulative_residual: Optional[float] = None
     max_layer_residual: Optional[float] = None
     max_length_mismatch: Optional[float] = None
+    max_strain_energy: Optional[float] = None
 
     def passes(self, record: MoireStructure) -> bool:
         """True if ``record`` satisfies every threshold that is set."""
@@ -204,6 +218,9 @@ class Filters:
         worst = record.worst_layer_residual
         if self.max_layer_residual is not None and worst is not None and worst > self.max_layer_residual:
             reasons.append(f"max layer residual {worst:.3g} > {self.max_layer_residual:.3g}")
+        energy = record.strain_energy
+        if self.max_strain_energy is not None and energy is not None and energy > self.max_strain_energy:
+            reasons.append(f"strain energy {energy:.3g} meV/Å² > {self.max_strain_energy:.3g}")
         if self.max_length_mismatch is not None:
             a1, a2 = record.lattice_vectors
             mismatch = abs(np.linalg.norm(a1) - np.linalg.norm(a2))
@@ -467,6 +484,7 @@ def record_from_cell(
     upper: MoireStructure,
     cell: CellMatch,
     search_dirs: Sequence[PathLike] = (),
+    layer_elastic: Optional[Sequence[Optional[Elastic]]] = None,
 ) -> MoireStructure:
     """Build the child record for ``lower`` + ``upper`` combined at ``cell``.
 
@@ -475,6 +493,7 @@ def record_from_cell(
     and its other layers keep their rotations relative to that bottom layer.
     A strained parent (only possible for a level-0 layer) contributes its new strain;
     otherwise the parent's ``layer_strains`` are inherited unchanged.
+    ``layer_elastic`` (one entry per layer of the child) gives ``strain_energy``.
     """
     upper_base = twist_offset(lower) + cell.twist
     rotations = list(lower.layer_rotations) + [upper_base + rotation for rotation in upper.layer_rotations]
@@ -499,6 +518,7 @@ def record_from_cell(
         layer_residuals=layer_residuals(cell.vectors, poscars, rotations, search_dirs, strains),
         coefficients={"lower": cell.lower_coeffs.tolist(), "upper": cell.upper_coeffs.tolist()},
         layer_strains=[(100.0 * strain).tolist() for strain in strains],  # stored in percent
+        strain_energy=None if layer_elastic is None else strain_energy(strains, list(layer_elastic)),
     )
 
 
@@ -508,6 +528,7 @@ def strain_cells(
     upper: MoireStructure,
     params: SearchParams,
     limits: tuple[float, float],
+    elastic: tuple[Optional[Elastic], Optional[Elastic]] = (None, None),
 ) -> list[CellMatch]:
     """Turn near-coincidences into exactly commensurate, strained cells.
 
@@ -534,7 +555,7 @@ def strain_cells(
         for run in _split_into_angle_runs(group, params.cluster_tol):
             start = _best(run)
             fit = fit_strain(start.vectors, upper.lattice_vectors, start.upper_coeffs,
-                             offset + start.twist, params.strain_mode, *limits)
+                             offset + start.twist, params.strain_mode, *limits, *elastic)
             twist = start.twist + fit.twist_correction
             closed = fit.residual <= params.strain_residual_tol
             if not closed or not fit.within(*limits) or not params.degmin <= twist < params.degmax:
@@ -563,6 +584,7 @@ def find_candidates(
     params: SearchParams,
     search_dirs: Sequence[PathLike] = (),
     strain_limits: tuple[float, float] = (0.0, 0.0),
+    layer_elastic: Optional[Sequence[Optional[Elastic]]] = None,
 ) -> list[MoireStructure]:
     """All commensurate cells of ``lower`` + twisted ``upper`` (no residual filters).
 
@@ -573,6 +595,10 @@ def find_candidates(
     level-0 layers can be strained (blocks built in earlier rounds stay rigid). With a
     limit, the scan tolerance is widened so that near-coincidences needing up to that
     strain are found, and each is then strained to an exact match (:func:`strain_cells`).
+
+    ``layer_elastic``: optional :class:`~MLM.strain.Elastic` constants, one per layer of the
+    combined stack (lower's layers, then upper's). They make the strain sharing minimise
+    the elastic energy and fill in ``strain_energy`` (meV/Å²).
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
     >>> params = SearchParams(degmin=22.0, degmax=23.0, nmin=-10, nmax=10, goodangles=(90.0,))
@@ -592,23 +618,38 @@ def find_candidates(
     degmin, degmax = params.window_for(lower)
     a1, a2 = lower.lattice_vectors
     g1, g2 = upper.lattice_vectors
-    tolerance = params.dtol
-    if strained:
+    tolerance, relative = params.dtol, 0.0
+    if strained and params.scanner == "match":
+        # match.scan only knows one global tolerance: widen it to the largest |m| searched.
         tolerance = scan_tolerance(params.dtol, sum(limits), max(abs(params.nmin), abs(params.nmax)),
                                    lower.lattice_vectors, upper.lattice_vectors, params.degstep)
+    elif strained:
+        # A strain ε shifts the upper coordinates by ≈ ε·|m|; the grid adds up to Δθ/2 rad·|m|.
+        # A tolerance proportional to |m| (with a 25 % margin) keeps the per-angle match list
+        # free of junk, so the real candidates are not cut by the 25-per-angle cap.
+        relative = 1.25 * (sum(limits) + np.deg2rad(params.degstep) / 2)
     arguments = dict(degmin=degmin, degmax=degmax, degstep=params.degstep, dtol=tolerance,
                      nmin=params.nmin, nmax=params.nmax, goodangles=list(params.goodangles))
     if params.scanner == "match":
         results = run_and_filter(a1, a2, g1, g2, **arguments)
     else:
+        cap = params.max_matches_per_angle
+        if cap == "auto":
+            cap = STRAINED_MATCHES_PER_ANGLE if strained else 25
         results = fastscan.run_and_filter(a1, a2, g1, g2, include_axes=params.include_axes,
-                                          max_per_angle=params.max_matches_per_angle, **arguments)
+                                          max_per_angle=cap, relative_tol=relative, **arguments)
     cells = cells_from_run(results, offset=twist_offset(lower))
+    if layer_elastic is not None and len(layer_elastic) != lower.n_layers + upper.n_layers:
+        raise ValueError(f"layer_elastic needs {lower.n_layers + upper.n_layers} entries, got {len(layer_elastic)}")
+    roots_elastic = (None, None)
+    if layer_elastic is not None:
+        roots_elastic = (layer_elastic[0] if lower.is_root else None,
+                         layer_elastic[lower.n_layers] if upper.is_root else None)
     if strained and cells:
-        cells = strain_cells(cells, lower, upper, params, limits)
+        cells = strain_cells(cells, lower, upper, params, limits, roots_elastic)
     elif params.dedupe and cells:
         cells = deduplicate(cells, params.keep_supercells, params.cluster_tol)
-    return [record_from_cell(lower, upper, cell, search_dirs) for cell in cells]
+    return [record_from_cell(lower, upper, cell, search_dirs, layer_elastic) for cell in cells]
 
 
 def search_pair(
@@ -618,6 +659,7 @@ def search_pair(
     filters: Optional[Filters] = None,
     search_dirs: Sequence[PathLike] = (),
     strain_limits: tuple[float, float] = (0.0, 0.0),
+    layer_elastic: Optional[Sequence[Optional[Elastic]]] = None,
 ) -> list[MoireStructure]:
     """Commensurate cells of ``lower`` + twisted ``upper`` that pass ``filters``.
 
@@ -633,7 +675,7 @@ def search_pair(
     (22.620000000000097, 3.39e-05)
     """
     filters = filters or Filters()
-    candidates = find_candidates(lower, upper, params, search_dirs, strain_limits)
+    candidates = find_candidates(lower, upper, params, search_dirs, strain_limits, layer_elastic)
     return [candidate for candidate in candidates if filters.passes(candidate)]
 
 
@@ -868,6 +910,7 @@ def job_to_spec_dict(
     filters: Filters,
     output_dir: PathLike,
     strain_limits: Optional[Sequence[float]] = None,
+    elastic: Optional[Sequence[Optional[Elastic]]] = None,
 ) -> dict[str, Any]:
     """The stack-spec dict equivalent to a ``build_stack`` call (for ``stack_spec.yaml``).
 
@@ -875,10 +918,14 @@ def job_to_spec_dict(
     """
     limits = strain_limits if strain_limits is not None else [0.0] * len(layers)
     layer_entries = []
-    for layer, limit in zip(layers, limits):
+    constants = list(elastic) if elastic is not None else [None] * len(layers)
+    for layer, limit, layer_constants in zip(layers, limits, constants):
         entry = {"poscar": layer.source_poscar[0], "material": layer.material[0]}
         if limit:
             entry["strain"] = float(limit)
+        if layer_constants is not None:
+            entry["young"] = float(layer_constants.young)
+            entry["poisson"] = float(layer_constants.poisson)
         layer_entries.append(entry)
     return {
         "name": name,
@@ -905,6 +952,7 @@ def build_stack(
     should_stop: Optional[Callable[[], bool]] = None,
     progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
     index_format: str = "csv",
+    elastic: Optional[Sequence[Any]] = None,
 ) -> StackResult:
     """Build every commensurate N-layer cell by a tournament-tree reduction.
 
@@ -934,6 +982,10 @@ def build_stack(
       (finished steps are kept, ``status = "stopped"``; resume later).
     - ``progress_callback``: called after every search with
       ``{"round", "step", "done", "total"}``.
+    - ``elastic``: optional per-layer elastic constants (:class:`~MLM.strain.Elastic`,
+      a dict ``{"young": N/m, "poisson": ν}``, or ``None``). With constants for both layers
+      of a strained pair the strain is shared to minimise elastic energy, and every
+      structure whose layers all have constants gets ``strain_energy`` (meV/Å²).
     - ``index_format``: ``"csv"`` (default, human-readable) or ``"sqlite"`` (for very
       large runs; ``find`` then filters in SQL).
     - Writes ``run_info.yaml`` (versions, git commit, timings; see :mod:`MLM.runinfo`).
@@ -956,13 +1008,14 @@ def build_stack(
             raise ValueError(f"build_stack expects level-0 layers, got {layer!r}")
 
     strain_limits = _check_strain_limits(strain_limits, len(layers))
+    elastic = _check_elastic(elastic, len(layers))
     plan = plan_rounds(len(layers))
     if dry_run:
         return _dry_run(layers, plan, schedule, run_dir, say)
 
     run_dir = Path(run_dir)
     store = RunStore(run_dir, index_format=index_format)
-    job = job_to_spec_dict(run_dir.name, layers, schedule, filters, run_dir, strain_limits)
+    job = job_to_spec_dict(run_dir.name, layers, schedule, filters, run_dir, strain_limits, elastic)
     progress = _Progress(run_dir, job)
     if resume:
         progress.load_for_resume()
@@ -1016,7 +1069,8 @@ def build_stack(
             started = time.perf_counter()
             outcome = _run_step(blocks[step.lower], blocks[step.upper], params, filters, store, round_number,
                                 search_dirs, limits, workers, should_stop,
-                                lambda done_, total_, r=round_number, s=step: _notify(progress_callback, r, s, done_, total_))
+                                lambda done_, total_, r=round_number, s=step: _notify(progress_callback, r, s, done_, total_),
+                                _elastic_for(step, elastic))
             store.write_index()  # keep the index current after every step
             if outcome is None:  # stopped by the caller
                 stopped = True
@@ -1105,6 +1159,24 @@ def _comparable_job(job: dict[str, Any]) -> dict[str, Any]:
                                           if key not in ("name", "output_dir")}))
 
 
+def _check_elastic(elastic: Optional[Sequence[Any]], n_layers: int) -> Optional[list[Optional[Elastic]]]:
+    """Per-layer elastic constants as :class:`Elastic` objects (``None`` = not given)."""
+    if elastic is None:
+        return None
+    values = list(elastic)
+    if len(values) != n_layers:
+        raise ValueError(f"elastic needs one entry per layer ({n_layers}), got {len(values)}")
+    return [value if value is None or isinstance(value, Elastic) else Elastic(**value) for value in values]
+
+
+def _elastic_for(step: Step, elastic: Optional[list[Optional[Elastic]]]) -> Optional[list[Optional[Elastic]]]:
+    """Elastic constants of the layers of the block a step produces."""
+    if elastic is None:
+        return None
+    start, stop = step.result
+    return elastic[start:stop]
+
+
 def _check_strain_limits(strain_limits: Optional[Sequence[float]], n_layers: int) -> list[float]:
     """Validate per-layer strain limits (percent); ``None`` means all layers rigid."""
     if strain_limits is None:
@@ -1125,8 +1197,8 @@ def _block_strain_limit(span: Span, strain_limits: Sequence[float]) -> float:
 
 def _search_task(task: tuple[Any, ...]) -> list[MoireStructure]:
     """One search, as a top-level function so that worker processes can run it."""
-    lower, upper, params, search_dirs, strain_limits = task
-    return find_candidates(lower, upper, params, search_dirs, strain_limits)
+    lower, upper, params, search_dirs, strain_limits, layer_elastic = task
+    return find_candidates(lower, upper, params, search_dirs, strain_limits, layer_elastic)
 
 
 def _run_step(
@@ -1141,6 +1213,7 @@ def _run_step(
     workers: Optional[int] = 1,
     should_stop: Optional[Callable[[], bool]] = None,
     on_search_done: Optional[Callable[[int, int], None]] = None,
+    layer_elastic: Optional[Sequence[Optional[Elastic]]] = None,
 ) -> Optional[tuple[list[MoireStructure], int]]:
     """All lower x upper searches of one step; store everything, return the passing ones.
 
@@ -1148,7 +1221,8 @@ def _run_step(
     stored in the same (lower, upper) order, so results do not depend on ``workers``.
     Returns ``None`` if ``should_stop()`` ended the step early.
     """
-    tasks = [(lower, upper, params, tuple(search_dirs), strain_limits) for lower in lowers for upper in uppers]
+    tasks = [(lower, upper, params, tuple(search_dirs), strain_limits, layer_elastic)
+             for lower in lowers for upper in uppers]
     n_workers = min(_resolve_workers(workers), len(tasks))
 
     def results():

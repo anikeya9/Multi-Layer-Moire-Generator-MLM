@@ -59,6 +59,62 @@ _N_PARAMS = {"isotropic": 1, "axial": 2, "full": 3}
 _SHARING_WEIGHT = 1e-6
 
 
+#: 1 J/m² in meV/Å² (1 J = 6.241509e21 meV, 1 m² = 1e20 Å²).
+J_PER_M2_IN_MEV_PER_A2 = 62.41509074
+
+#: d(e_xx, e_yy, e_xy)/d(params) for each mode: the parameters as a strain "vector".
+_PARAM_TO_VOIGT = {
+    "isotropic": np.array([[1.0], [1.0], [0.0]]),
+    "axial": np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]),
+    "full": np.eye(3),
+}
+
+
+@dataclass(frozen=True)
+class Elastic:
+    """In-plane elastic constants of one layer (isotropic, plane stress).
+
+    - ``young``: 2D Young's modulus in N/m (= J/m²), e.g. ~340 N/m for graphene;
+      for a slab, the 3D modulus times its thickness.
+    - ``poisson``: Poisson ratio ν (also used for the thickness response when building).
+
+    Elastic energy per area (the standard isotropic plane-stress form):
+    W = Y / (2(1 − ν²)) · (ε_xx² + ε_yy² + 2ν ε_xx ε_yy + 2(1 − ν) ε_xy²).
+
+    >>> round(Elastic(young=100.0, poisson=0.25).energy_density(np.eye(2) * 0.01), 6)   # J/m²
+    0.013333
+    """
+
+    young: float
+    poisson: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.young <= 0 or not -1.0 < self.poisson < 0.5:
+            raise ValueError(f"need young > 0 and -1 < poisson < 0.5, got {self.young}, {self.poisson}")
+
+    def hessian(self) -> np.ndarray:
+        """3x3 H with W = ½ vᵀ H v for v = (ε_xx, ε_yy, ε_xy)."""
+        nu = self.poisson
+        return self.young / (1.0 - nu ** 2) * np.array([[1.0, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 2.0 * (1.0 - nu)]])
+
+    def energy_density(self, epsilon: np.ndarray) -> float:
+        """W in J/m² for a 2x2 strain tensor (fractions)."""
+        v = np.array([epsilon[0, 0], epsilon[1, 1], epsilon[0, 1]])
+        return float(0.5 * v @ self.hessian() @ v)
+
+
+def strain_energy(strains: list[np.ndarray], elastic: list[Optional[Elastic]]) -> Optional[float]:
+    """Total elastic energy of all layers per area of the cell, in meV/Å².
+
+    ``None`` if any layer has no elastic constants. Each layer stores W per area of that
+    layer; all layers have the same (moiré cell) area, so the sum is per cell area.
+    """
+    if any(constants is None for constants in elastic):
+        return None
+    total = sum(constants.energy_density(strain) for strain, constants in zip(strains, elastic))
+    return float(total * J_PER_M2_IN_MEV_PER_A2)
+
+
 def strain_tensor(mode: str, params: np.ndarray) -> np.ndarray:
     """2x2 strain tensor (fractions) from the mode's parameters.
 
@@ -131,6 +187,8 @@ def fit_strain(
     mode: str,
     limit_lower: float,
     limit_upper: float,
+    elastic_lower: Optional[Elastic] = None,
+    elastic_upper: Optional[Elastic] = None,
 ) -> StrainFit:
     """Solve for the strains (and twist correction) that make a cell commensurate.
 
@@ -139,6 +197,10 @@ def fit_strain(
     - ``upper_coeffs``: 2x2 integers, rows = ``m``, ``m'``.
     - ``theta_deg``: rotation of the upper lattice in the lower frame (the scan angle).
     - ``limit_lower``, ``limit_upper``: strain limits as fractions (0 = rigid layer).
+    - ``elastic_lower``, ``elastic_upper``: optional :class:`Elastic` constants. If both
+      layers can strain and both have constants, the mismatch is shared so that the
+      total elastic energy is minimal (the stiffer layer strains less); otherwise in
+      proportion to the limits. The limits are checked afterwards either way.
 
     >>> square = np.array([[1.0, 0.0], [0.0, 1.0]])
     >>> fit = fit_strain(square * 1.0, square * 1.01, np.eye(2, dtype=int), 0.0, "isotropic", 0.0, 0.02)
@@ -172,17 +234,28 @@ def fit_strain(
         upper = _rotation(theta + delta) @ (np.eye(2) + eps_upper) @ upper_cols
         return lower, upper
 
+    # Sharing penalty: among the exact solutions, minimise either the elastic energy
+    # sum(½ pᵀ H p) (both layers with constants) or sum(|p|² / limit). Written as
+    # residuals L p with LᵀL = the weight matrix, scaled so only the *ratio* matters.
+    use_energy = strain_lower and strain_upper and elastic_lower is not None and elastic_upper is not None
+    weights = []
+    for strainable, limit, constants in ((strain_lower, limit_lower, elastic_lower),
+                                         (strain_upper, limit_upper, elastic_upper)):
+        if not strainable:
+            continue
+        if use_energy:
+            projector = _PARAM_TO_VOIGT[mode]
+            reference = 0.5 * (elastic_lower.young + elastic_upper.young)
+            matrix = projector.T @ constants.hessian() @ projector / reference
+        else:
+            matrix = np.eye(k) / limit
+        weights.append(np.linalg.cholesky(matrix).T)  # upper triangular: |L p|² = pᵀ M p
+
     def residuals(x: np.ndarray) -> np.ndarray:
         lower, upper = cells(x)
         mismatch = ((lower - upper) / scale).ravel()
-        # Sharing penalty: minimise sum(eps^2 / limit) among the exact solutions.
-        penalty = []
-        position = 0
-        for strainable, limit in ((strain_lower, limit_lower), (strain_upper, limit_upper)):
-            if strainable:
-                penalty.extend(_SHARING_WEIGHT * x[position:position + k] / np.sqrt(limit))
-                position += k
-        return np.concatenate([mismatch, penalty])
+        penalty = [_SHARING_WEIGHT * (weight @ x[i * k:(i + 1) * k]) for i, weight in enumerate(weights)]
+        return np.concatenate([mismatch, *penalty])
 
     n_unknowns = k * (strain_lower + strain_upper) + 1
     solution = least_squares(residuals, np.zeros(n_unknowns), method="lm", xtol=1e-15, ftol=1e-15, gtol=1e-15)

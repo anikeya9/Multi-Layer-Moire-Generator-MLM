@@ -113,10 +113,14 @@ def test_schema_version_written_and_old_files_migrate(bto_root, tmp_path):
     from MLM.structure import SCHEMA_VERSION, migrate_record
 
     data = yaml.safe_load(bto_root.to_yaml(tmp_path).read_text())
-    assert data["schema_version"] == SCHEMA_VERSION == 2
-    old = {key: value for key, value in data.items() if key not in ("schema_version", "layer_strains")}
+    assert data["schema_version"] == SCHEMA_VERSION == 3
+    old = {key: value for key, value in data.items() if key not in ("schema_version", "layer_strains", "strain_energy")}
     migrated = migrate_record(old)
-    assert migrated["schema_version"] == 2 and migrated["layer_strains"] == [[[0.0, 0.0], [0.0, 0.0]]]
+    assert migrated["schema_version"] == 3 and migrated["layer_strains"] == [[[0.0, 0.0], [0.0, 0.0]]]
+    assert migrated["strain_energy"] is None
+    version_2 = dict(data, schema_version=2)
+    del version_2["strain_energy"]
+    assert migrate_record(version_2)["strain_energy"] is None
     assert MoireStructure.from_dict(old) == bto_root  # a version-1 file loads unchanged
     assert MoireStructure.from_dict(old).id == bto_root.id
     with pytest.raises(ValueError):
