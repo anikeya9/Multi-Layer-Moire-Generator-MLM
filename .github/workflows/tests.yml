@@ -1,0 +1,55 @@
+# Tests, lint, type checks and notebook execution on every push and pull request.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install MLM and the tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,gui,checks,dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Types (mypy)
+        run: mypy
+
+      - name: match.py is unchanged (reference implementation)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "${{ github.base_ref }}"
+          git diff --quiet "origin/${{ github.base_ref }}" -- src/MLM/match.py
+
+      - name: Tests
+        env:
+          TQDM_DISABLE: "1"
+        run: pytest -q
+
+      - name: Execute the notebooks
+        env:
+          TQDM_DISABLE: "1"
+        run: |
+          for notebook in dev/yaml_multilayer_demo.ipynb dev/yaml_multilayer_stretch.ipynb \
+                          notebooks/moire_stack_explorer.ipynb notebooks/mlm_gui.ipynb; do
+            echo "::group::$notebook"
+            (cd "$(dirname "$notebook")" && jupyter nbconvert --to notebook --execute \
+                 --output-dir /tmp/executed "$(basename "$notebook")")
+            echo "::endgroup::"
+          done

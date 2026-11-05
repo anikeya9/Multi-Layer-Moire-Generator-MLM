@@ -16,3 +16,37 @@ filterwarnings = [
     # spglib 2.x announces a future change of its error handling.
     "ignore:Set OLD_ERROR_HANDLING:DeprecationWarning",
 ]
+
+# ---------------------------------------------------------------------------
+# Code quality tools (run: `ruff check .`, `mypy`, or all at once: `pre-commit run -a`)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# The original modules are kept as they are (match.py must not change).
+extend-exclude = [
+    "src/MLM/match.py",
+    "src/MLM/moire_lattice_vector_finder.py",
+    "src/MLM/structure_writer.py",
+    "src/MLM/angle_between.py",
+    "notebooks",
+    "dev/*.ipynb",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E741",  # 'l' as a name is fine in short math helpers
+    "B905",  # zip() without strict= : lengths are validated explicitly where it matters
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # imports after pytest.importorskip
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/MLM"]
+exclude = ["src/MLM/match\\.py", "src/MLM/moire_lattice_vector_finder\\.py", "src/MLM/structure_writer\\.py"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true

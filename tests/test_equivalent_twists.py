@@ -36,7 +36,8 @@ def test_rotation_merges_twists_one_period_apart(bto):
     window = dict(nmin=-10, nmax=10, degstep=0.01)
     plain = find_candidates(bto, bto, SearchParams(degmin=22.0, degmax=113.0, **window))
     assert {22.62, 112.62} <= set(twists(plain))  # same structure, 90° apart
-    merged = find_candidates(bto, bto, SearchParams(degmin=22.0, degmax=113.0, merge_equivalent_twists="rotation", **window))
+    merging = SearchParams(degmin=22.0, degmax=113.0, merge_equivalent_twists="rotation", **window)
+    merged = find_candidates(bto, bto, merging)
     assert 22.62 in twists(merged) and 112.62 not in twists(merged)
     assert 67.38 in twists(merged)  # = 90 − 22.62: a mirror image, not a rotation
 

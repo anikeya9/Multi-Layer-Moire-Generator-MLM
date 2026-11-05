@@ -109,9 +109,11 @@ def strain_energy(strains: list[np.ndarray], elastic: list[Optional[Elastic]]) -
     ``None`` if any layer has no elastic constants. Each layer stores W per area of that
     layer; all layers have the same (moiré cell) area, so the sum is per cell area.
     """
-    if any(constants is None for constants in elastic):
-        return None
-    total = sum(constants.energy_density(strain) for strain, constants in zip(strains, elastic))
+    total = 0.0
+    for strain, constants in zip(strains, elastic):
+        if constants is None:
+            return None
+        total += constants.energy_density(strain)
     return float(total * J_PER_M2_IN_MEV_PER_A2)
 
 
@@ -237,15 +239,17 @@ def fit_strain(
     # Sharing penalty: among the exact solutions, minimise either the elastic energy
     # sum(½ pᵀ H p) (both layers with constants) or sum(|p|² / limit). Written as
     # residuals L p with LᵀL = the weight matrix, scaled so only the *ratio* matters.
-    use_energy = strain_lower and strain_upper and elastic_lower is not None and elastic_upper is not None
+    energy_pair = None
+    if strain_lower and strain_upper and elastic_lower is not None and elastic_upper is not None:
+        energy_pair = (elastic_lower, elastic_upper)
     weights = []
     for strainable, limit, constants in ((strain_lower, limit_lower, elastic_lower),
                                          (strain_upper, limit_upper, elastic_upper)):
         if not strainable:
             continue
-        if use_energy:
+        if energy_pair is not None and constants is not None:
             projector = _PARAM_TO_VOIGT[mode]
-            reference = 0.5 * (elastic_lower.young + elastic_upper.young)
+            reference = 0.5 * (energy_pair[0].young + energy_pair[1].young)
             matrix = projector.T @ constants.hessian() @ projector / reference
         else:
             matrix = np.eye(k) / limit

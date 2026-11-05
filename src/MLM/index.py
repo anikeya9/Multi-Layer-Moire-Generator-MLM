@@ -24,7 +24,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -136,7 +136,7 @@ class RunStore:
             clean = {key: (None if isinstance(value, float) and value != value else value)
                      for key, value in row.items()}
             clean["parents"] = clean["parents"] or ""
-            self.rows.setdefault(clean["id"], clean)
+            self.rows.setdefault(str(clean["id"]), clean)
 
     def write_index(self) -> Path:
         """(Re)write the index (``index.csv`` or ``index.sqlite``) from the rows collected so far."""
@@ -269,11 +269,16 @@ def find(
     >>> find("runs/bto_trilayer_demo", n_layers=3, max_cumulative_residual=1e-3)   # doctest: +SKIP
     """
     # Every numeric filter as (SQL condition, parameters, pandas mask function).
-    conditions: list[tuple[str, tuple, object]] = []
+    conditions: list[tuple[str, tuple, Callable[[pd.DataFrame], pd.Series]]] = []
 
     def at_most(column: str, value: Optional[float]) -> None:
-        if value is not None:
-            conditions.append((f"{column} <= ?", (value,), lambda t, c=column, v=value: t[c] <= v))
+        if value is None:
+            return
+
+        def mask(table: pd.DataFrame) -> pd.Series:
+            return table[column] <= value
+
+        conditions.append((f"{column} <= ?", (value,), mask))
 
     if n_layers is not None:
         conditions.append(("n_layers = ?", (n_layers,), lambda t: t["n_layers"] == n_layers))

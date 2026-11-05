@@ -1,7 +1,17 @@
 import nbformat as nbf
-nb = nbf.v4.new_notebook(); cells = []
-md = lambda s: cells.append(nbf.v4.new_markdown_cell(s))
-code = lambda s: cells.append(nbf.v4.new_code_cell(s))
+
+nb = nbf.v4.new_notebook()
+cells = []
+
+
+def md(text):
+    cells.append(nbf.v4.new_markdown_cell(text))
+
+
+def code(text):
+    cells.append(nbf.v4.new_code_cell(text))
+
+
 md("""# More stacks: 4 and 5 layers, and a heterostructure
 
 Companion to `yaml_multilayer_demo.ipynb`. Three stack specs from `examples/`:
@@ -20,7 +30,8 @@ from MLM.index import load_index, find, lineage
 from MLM.build import write_structure, build_atoms
 from MLM.index import get
 REPO = Path("..")
-COLUMNS = ["id", "n_layers", "twist", "residual", "cumulative_residual", "max_layer_residual", "cell_area", "passed_filter"]""")
+COLUMNS = ["id", "n_layers", "twist", "residual", "cumulative_residual", "max_layer_residual",
+           "cell_area", "passed_filter"]""")
 md("""## 1. Four layers
 
 Plan: round 1 = (L1 + L2), (L3 + L4); round 2 = (L1-2) + (L3-4). Both round-1 pairs give the

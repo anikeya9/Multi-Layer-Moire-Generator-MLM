@@ -34,10 +34,10 @@ from typing import Any, Callable, Optional, Sequence, Union
 import numpy as np
 import yaml
 
-from MLM.index import SPEC_FILENAME, RunStore, get
-from MLM.runinfo import RunInfo
 from MLM import fastscan
+from MLM.index import SPEC_FILENAME, RunStore, get
 from MLM.match import run_and_filter
+from MLM.runinfo import RunInfo
 from MLM.strain import STRAIN_MODES, Elastic, fit_strain, scan_tolerance, strain_energy, strain_magnitude
 from MLM.structure import MoireStructure, PathLike, read_primitive
 
@@ -127,7 +127,8 @@ class SearchParams:
         if self.degmax <= self.degmin or self.degstep <= 0:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
         if self.merge_equivalent_twists not in MERGE_MODES:
-            raise ValueError(f"merge_equivalent_twists must be one of {MERGE_MODES}, got {self.merge_equivalent_twists!r}")
+            raise ValueError(f"merge_equivalent_twists must be one of {MERGE_MODES}, "
+                             f"got {self.merge_equivalent_twists!r}")
         if self.scanner not in SCANNERS:
             raise ValueError(f"scanner must be one of {SCANNERS}, got {self.scanner!r}")
         if self.max_matches_per_angle is not None and self.max_matches_per_angle != "auto" \
@@ -212,13 +213,14 @@ class Filters:
 
     def reasons_rejected(self, record: MoireStructure) -> list[str]:
         """Human-readable list of the thresholds ``record`` violates (empty = passes)."""
-        reasons = []
+        reasons: list[str] = []
         if record.is_root:
             return reasons  # roots have no residual; they always pass
-        if self.max_residual is not None and record.residual > self.max_residual:
+        if self.max_residual is not None and record.residual is not None and record.residual > self.max_residual:
             reasons.append(f"residual {record.residual:.3g} > {self.max_residual:.3g}")
         if (
             self.max_cumulative_residual is not None
+            and record.cumulative_residual is not None
             and record.cumulative_residual > self.max_cumulative_residual
         ):
             reasons.append(
@@ -699,15 +701,17 @@ def find_candidates(
     if params.scanner == "match":
         results = run_and_filter(a1, a2, g1, g2, **arguments)
     else:
-        cap = params.max_matches_per_angle
-        if cap == "auto":
+        cap: Optional[int]
+        if params.max_matches_per_angle == "auto":
             cap = STRAINED_MATCHES_PER_ANGLE if strained else 25
+        else:
+            cap = params.max_matches_per_angle  # type: ignore[assignment]  # int or None (validated)
         results = fastscan.run_and_filter(a1, a2, g1, g2, include_axes=params.include_axes,
                                           max_per_angle=cap, relative_tol=relative, **arguments)
     cells = cells_from_run(results, offset=twist_offset(lower))
     if layer_elastic is not None and len(layer_elastic) != lower.n_layers + upper.n_layers:
         raise ValueError(f"layer_elastic needs {lower.n_layers + upper.n_layers} entries, got {len(layer_elastic)}")
-    roots_elastic = (None, None)
+    roots_elastic: tuple[Optional[Elastic], Optional[Elastic]] = (None, None)
     if layer_elastic is not None:
         roots_elastic = (layer_elastic[0] if lower.is_root else None,
                          layer_elastic[lower.n_layers] if upper.is_root else None)
@@ -796,9 +800,16 @@ class Step:
             first, last = span[0] + 1, span[1]  # 1-based layer numbers for humans
             return f"L{first}" if first == last else f"L{first}-{last}"
 
-        if self.is_carry:
+        if self.upper is None:
             return f"carry {name(self.lower)}"
         return f"{name(self.lower)} + {name(self.upper)} -> {name(self.result)}"
+
+    @property
+    def upper_span(self) -> Span:
+        """``upper`` for a merge step (raises for a carry, which has no upper block)."""
+        if self.upper is None:
+            raise ValueError(f"{self} carries a block forward; it has no upper block")
+        return self.upper
 
 
 def plan_rounds(n_layers: int) -> list[list[Step]]:
@@ -987,7 +998,7 @@ def job_to_spec_dict(
     layer_entries = []
     constants = list(elastic) if elastic is not None else [None] * len(layers)
     for layer, limit, layer_constants in zip(layers, limits, constants):
-        entry = {"poscar": layer.source_poscar[0], "material": layer.material[0]}
+        entry: dict[str, Any] = {"poscar": layer.source_poscar[0], "material": layer.material[0]}
         if limit:
             entry["strain"] = float(limit)
         if layer_constants is not None:
@@ -1058,7 +1069,8 @@ def build_stack(
     - Writes ``run_info.yaml`` (versions, git commit, timings; see :mod:`MLM.runinfo`).
 
     >>> root = MoireStructure.from_poscar("moire_structures/bto/bto_1-layer.vasp", "bto")
-    >>> schedule = SearchSchedule(SearchParams(degmin=22, degmax=23), {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}})
+    >>> later = {2: {"degmin": 36.5, "degmax": 37.5, "nmin": -40, "nmax": 40}}
+    >>> schedule = SearchSchedule(SearchParams(degmin=22, degmax=23), later)
     >>> result = build_stack([root] * 3, schedule, Filters(max_residual=1e-3), run_dir="runs/demo")   # doctest: +SKIP
     >>> print(result.summary())                                                                     # doctest: +SKIP
     """
@@ -1114,7 +1126,7 @@ def build_stack(
         for step in steps:
             params = schedule.params_for_step(round_number, step)
             report = StepReport(round_number, step, len(blocks[step.lower]),
-                                None if step.is_carry else len(blocks[step.upper]),
+                                None if step.is_carry else len(blocks[step.upper_span]),
                                 cost_per_search=None if step.is_carry else params.estimated_cost())
             if step.is_carry:
                 new_blocks[step.result] = blocks[step.lower]
@@ -1128,15 +1140,18 @@ def build_stack(
                 say(f"{report} [from the earlier session]")
                 reports.append(report)
                 continue
-            limits = (_block_strain_limit(step.lower, strain_limits), _block_strain_limit(step.upper, strain_limits))
+            limits = (_block_strain_limit(step.lower, strain_limits),
+                      _block_strain_limit(step.upper_span, strain_limits))
             strain_note = f", strain ≤ {limits[0]:g}% / {limits[1]:g}% ({params.strain_mode})" if any(limits) else ""
             say(f"round {round_number}: {step}: {report.n_searches} searches, twist window "
                 f"{params.degmin:g}–{params.degmax:g}°{strain_note} "
                 f"(~{params.estimated_cost():.2e} lattice-point tests each)")
             started = time.perf_counter()
-            outcome = _run_step(blocks[step.lower], blocks[step.upper], params, filters, store, round_number,
-                                search_dirs, limits, workers, should_stop,
-                                lambda done_, total_, r=round_number, s=step: _notify(progress_callback, r, s, done_, total_),
+            def report_search(done_: int, total_: int, r: int = round_number, s: Step = step) -> None:
+                _notify(progress_callback, r, s, done_, total_)
+
+            outcome = _run_step(blocks[step.lower], blocks[step.upper_span], params, filters, store, round_number,
+                                search_dirs, limits, workers, should_stop, report_search,
                                 _elastic_for(step, elastic))
             store.write_index()  # keep the index current after every step
             if outcome is None:  # stopped by the caller
@@ -1351,7 +1366,7 @@ def _dry_run(
         for step in steps:
             params = schedule.params_for_step(round_number, step)
             report = StepReport(round_number, step, known[step.lower],
-                                None if step.is_carry else known[step.upper],
+                                None if step.is_carry else known[step.upper_span],
                                 cost_per_search=None if step.is_carry else params.estimated_cost())
             # After a search the candidate count is unknown; a carried block keeps its count.
             next_known[step.result] = known[step.lower] if step.is_carry else None

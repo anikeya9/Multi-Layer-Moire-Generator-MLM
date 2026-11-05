@@ -58,8 +58,8 @@ def test_lateral_shift_moves_one_layer_rigidly(trilayer):
     assert shifted.layer_counts == plain.layer_counts and check_built(shifted, symmetry=False).ok
     # Layer 2 sits at 22.62°: a shift of (a+b)/2 of its own cell, rotated into the lab frame.
     a = 3.9903790951
-    expected = np.array([[np.cos(np.deg2rad(trilayer.layer_rotations[1])), -np.sin(np.deg2rad(trilayer.layer_rotations[1]))],
-                         [np.sin(np.deg2rad(trilayer.layer_rotations[1])), np.cos(np.deg2rad(trilayer.layer_rotations[1]))]]) @ [a / 2, a / 2]
+    angle = np.deg2rad(trilayer.layer_rotations[1])
+    expected = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]) @ [a / 2, a / 2]
     cell = trilayer.lattice_vectors.T  # columns A1, A2
 
     def fractional_set(built, layer):

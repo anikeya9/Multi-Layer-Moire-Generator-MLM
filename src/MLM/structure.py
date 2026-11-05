@@ -264,7 +264,7 @@ class MoireStructure:
     layer_rotations: list[float] = field(default_factory=lambda: [0.0])
     layer_residuals: Optional[list[float]] = None
     coefficients: Optional[dict[str, list[list[int]]]] = None
-    layer_strains: Optional[list[list[list[float]]]] = None
+    layer_strains: list[list[list[float]]] = field(default_factory=list)
     strain_energy: Optional[float] = None
     id: str = ""
 
@@ -278,7 +278,7 @@ class MoireStructure:
         self.twist_sequence = [float(angle) for angle in self.twist_sequence]
         if self.layer_residuals is not None:
             self.layer_residuals = [float(value) for value in self.layer_residuals]
-        if self.layer_strains is None:
+        if not self.layer_strains:
             # Unstrained layers (also: recipes written before the strain feature).
             self.layer_strains = [[[0.0, 0.0], [0.0, 0.0]] for _ in range(self.n_layers)]
         self.layer_strains = [np.asarray(tensor, dtype=float).reshape(2, 2).tolist() for tensor in self.layer_strains]
@@ -294,7 +294,8 @@ class MoireStructure:
             if len(getattr(self, name)) != self.n_layers:
                 raise ValueError(f"{name} must have one entry per layer ({self.n_layers}), got {getattr(self, name)}")
         if self.level == 0:
-            not_null = [name for name in ("twist", "residual", "cumulative_residual") if getattr(self, name) is not None]
+            not_null = [name for name in ("twist", "residual", "cumulative_residual")
+                        if getattr(self, name) is not None]
             if self.parents or not_null:
                 raise ValueError(f"a level-0 record must have parents=[] and null {not_null}")
 

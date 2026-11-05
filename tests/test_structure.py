@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 import yaml
+from conftest import BTO_POSCAR, PTO_POSCAR
 
 from MLM.structure import SCHEMA_KEYS, MoireStructure, _to_builtin, material_label
-from conftest import BTO_POSCAR, PTO_POSCAR
 
 
 def make_bilayer(root: MoireStructure, twist: float = 22.62, residual: float = 3.4e-5) -> MoireStructure:

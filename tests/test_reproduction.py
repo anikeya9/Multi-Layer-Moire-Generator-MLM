@@ -113,7 +113,8 @@ def test_graphene_trilayer_csv_through_tree(tmp_path):
     """graphene bilayer 21.79° + layer 3 vs ``graphene_trilayer_candidates_21.80.csv``.
 
     The old CSV has layer 3 at 21.75/21.80° from layer 1, i.e. aligned with layer 2
-    (a twist of 0° from the layer below), and a cell of 3x the bilayer moiré cell. ``match.scan`` skips coefficients with a zero component,
+    (a twist of 0° from the layer below), and a cell of 3x the bilayer moiré cell.
+    ``match.scan`` skips coefficients with a zero component,
     so the bilayer cell itself (n = (1, 0), (0, 1)) can never be found; the smallest cell
     it can report is the same 3x cell.
     """

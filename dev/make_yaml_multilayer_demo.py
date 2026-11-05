@@ -1,8 +1,17 @@
 import nbformat as nbf
+
 nb = nbf.v4.new_notebook()
 cells = []
-md = lambda s: cells.append(nbf.v4.new_markdown_cell(s))
-code = lambda s: cells.append(nbf.v4.new_code_cell(s))
+
+
+def md(text):
+    cells.append(nbf.v4.new_markdown_cell(text))
+
+
+def code(text):
+    cells.append(nbf.v4.new_code_cell(text))
+
+
 
 md("""# YAML multilayer workflow — demo
 

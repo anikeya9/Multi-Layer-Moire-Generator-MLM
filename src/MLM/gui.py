@@ -99,7 +99,8 @@ def list_runs(runs_dir: Path) -> list[str]:
     runs_dir = Path(runs_dir)
     if not runs_dir.is_dir():
         return []
-    found = [d for d in runs_dir.iterdir() if d.is_dir() and ((d / "index.csv").exists() or (d / "index.sqlite").exists())]
+    found = [d for d in runs_dir.iterdir()
+             if d.is_dir() and ((d / "index.csv").exists() or (d / "index.sqlite").exists())]
     return [d.name for d in sorted(found, key=lambda d: d.stat().st_mtime, reverse=True)]
 
 
@@ -140,7 +141,8 @@ def build_job(
                            strain_mode=strain_mode, scanner=scanner, include_axes=include_axes,
                            merge_equivalent_twists=merge_twists)
     rounds = {r: {"nmin": -n_later, "nmax": n_later} for r in range(2, len(layers) + 1)}
-    interfaces = {k: {"degmin": float(low), "degmax": float(high)} for k, (low, high) in enumerate(twist_ranges, start=1)}
+    interfaces = {k: {"degmin": float(low), "degmax": float(high)}
+                  for k, (low, high) in enumerate(twist_ranges, start=1)}
     elastic = None
     if any(layer.get("young") for layer in layers):
         elastic = [Elastic(young=float(layer["young"]), poisson=float(layer.get("poisson") or 0.0))
@@ -161,14 +163,17 @@ def plan_table(job: dict[str, Any]) -> pd.DataFrame:
     for round_number, steps in enumerate(plan_rounds(len(job["roots"])), start=1):
         for step in steps:
             if step.is_carry:
-                rows.append({"round": round_number, "combination": str(step), "interface": "—", "twist range (deg)": "—",
-                             "n range": "—", "strain limits (%)": "—", "≈ s per search": "—"})
+                rows.append({"round": round_number, "combination": str(step), "interface": "—",
+                             "twist range (deg)": "—", "n range": "—", "strain limits (%)": "—",
+                             "≈ s per search": "—"})
                 continue
             params = job["schedule"].params_for_step(round_number, step)
+            upper_span = step.upper_span
+            interface = upper_span[0]  # = step.interface: layer k | layer k+1
             lower = limits[step.lower[0]] if step.lower[1] - step.lower[0] == 1 else 0.0
-            upper = limits[step.upper[0]] if step.upper[1] - step.upper[0] == 1 else 0.0
+            upper = limits[upper_span[0]] if upper_span[1] - upper_span[0] == 1 else 0.0
             rows.append({"round": round_number, "combination": str(step),
-                         "interface": f"layer {step.interface} → {step.interface + 1}",
+                         "interface": f"layer {interface} → {interface + 1}",
                          "twist range (deg)": f"{params.degmin:g} – {params.degmax:g}",
                          "n range": f"±{params.nmax}",
                          "strain limits (%)": f"{lower:g} / {upper:g}" if lower or upper else "rigid",
@@ -185,7 +190,8 @@ def results_table(run_dir: Path, n_layers: Optional[int] = None, passed_only: bo
         n_layers = int(table["n_layers"].max())
     hits = find(run_dir, n_layers=n_layers, passed_filter=True if passed_only else None,
                 max_residual=max_residual, max_layer_residual=max_layer_residual, max_strain=max_strain)
-    columns = ["id", "twist", "residual", "max_layer_residual", "max_strain", "strain_energy", "cell_area", "passed_filter"]
+    columns = ["id", "twist", "residual", "max_layer_residual", "max_strain", "strain_energy",
+               "cell_area", "passed_filter"]
     return hits.sort_values(["cell_area", "max_layer_residual"])[columns].reset_index(drop=True)
 
 
@@ -338,8 +344,9 @@ class MLMApp:
             self.layers_box, add,
             w.HTML("<b>Twist ranges</b> (degrees): layer k+1 relative to layer k (the layer directly below)."),
             self.interfaces_box,
-            w.HBox([self.cell_angles, w.VBox([self.max_residual, w.HBox([self.max_layer_residual, self.use_layer_residual]),
-                                               self.strain_mode, self.run_name])]),
+            w.HBox([self.cell_angles,
+                    w.VBox([self.max_residual, w.HBox([self.max_layer_residual, self.use_layer_residual]),
+                            self.strain_mode, self.run_name])]),
             advanced, self.stack_message])
 
     def _add_layer_row(self, values: dict[str, Any], refresh: bool = False) -> None:
@@ -355,12 +362,13 @@ class MLMApp:
             "young": w.FloatText(value=float(values.get("young") or 0.0), layout=w.Layout(width="80px")),
             "poisson": w.FloatText(value=float(values.get("poisson") or 0.0), layout=w.Layout(width="70px")),
         }
-        up, down, remove = (w.Button(icon=icon, layout=w.Layout(width="36px")) for icon in ("arrow-up", "arrow-down", "trash"))
+        up, down, remove = (w.Button(icon=icon, layout=w.Layout(width="36px"))
+                            for icon in ("arrow-up", "arrow-down", "trash"))
         up.on_click(lambda _, r=row: self._move_layer(r, -1))
         down.on_click(lambda _, r=row: self._move_layer(r, +1))
         remove.on_click(lambda _, r=row: self._remove_layer(r))
-        row["box"] = w.HBox([row["poscar"], row["label"], w.Label("strain %"), row["strain"], w.Label("Y"), row["young"],
-                             w.Label("ν"), row["poisson"], up, down, remove])
+        row["box"] = w.HBox([row["poscar"], row["label"], w.Label("strain %"), row["strain"],
+                             w.Label("Y"), row["young"], w.Label("ν"), row["poisson"], up, down, remove])
         self.layer_rows.append(row)
         if refresh:
             self._refresh_layers()
@@ -391,7 +399,8 @@ class MLMApp:
                                                          continuous_update=False, layout=w.Layout(width="620px")))
         self.interfaces_box.children = self.twist_sliders or [w.HTML("<i>add a second layer</i>")]
 
-    def set_layers(self, layers: Sequence[dict[str, Any]], twist_ranges: Optional[Sequence[tuple[float, float]]] = None) -> None:
+    def set_layers(self, layers: Sequence[dict[str, Any]],
+                   twist_ranges: Optional[Sequence[tuple[float, float]]] = None) -> None:
         """Fill the Stack tab from code (also used for the default example)."""
         self.layer_rows = []
         for values in layers:
@@ -547,7 +556,8 @@ class MLMApp:
             (f"{row.id}   twist {row.twist:8.3f}°   area {row.cell_area:9.1f} Å²   "
              f"layer res {row.max_layer_residual:.1e} Å   strain {row.max_strain:.3f} %", row.id)
             for row in table.itertuples()]
-        self.results_summary.value = f"<b>{len(table)}</b> candidate(s) in <code>{html.escape(str(self.run_dir))}</code>"
+        location = html.escape(str(self.run_dir))
+        self.results_summary.value = f"<b>{len(table)}</b> candidate(s) in <code>{location}</code>"
         self._plot_results(table)
         return table
 
@@ -604,10 +614,10 @@ class MLMApp:
 
     def show_structure(self) -> Optional[str]:
         """Draw the selected structure; returns the viewer's HTML (used by the tests)."""
-        record = self.selected
-        if record is None:
+        record, run_dir = self.selected, self.run_dir
+        if record is None or run_dir is None:
             return None
-        built = build_atoms(record, search_dirs=default_search_dirs(self.run_dir))
+        built = build_atoms(record, search_dirs=default_search_dirs(run_dir))
         self.built = built
         labels = [(f"{k}: {record.material[k - 1]} ({record.layer_rotations[k - 1]:.2f}°)", k)
                   for k in range(1, record.n_layers + 1)]
@@ -623,7 +633,7 @@ class MLMApp:
             from IPython.display import HTML, display
 
             display(HTML(markup))
-        report = check_built(built, search_dirs=default_search_dirs(self.run_dir))
+        report = check_built(built, search_dirs=default_search_dirs(run_dir))
         layer_rows = "".join(
             f"<tr><td>{k + 1}</td><td>{html.escape(record.material[k])}</td><td>{record.layer_rotations[k]:.4f}</td>"
             f"<td>{np.round(record.layer_strains[k], 4).tolist()}</td>"
@@ -635,10 +645,11 @@ class MLMApp:
             f"<p>cell |A1| = {np.linalg.norm(record.lattice_vectors[0]):.3f} Å, |A2| = "
             f"{np.linalg.norm(record.lattice_vectors[1]):.3f} Å, angle {record.angle_between_vectors:.2f}°, "
             f"area {record.cell_area:.1f} Å²; strain energy {energy}</p>"
-            f"{TABLE_CSS}<table class='mlm-table'><tr><th>layer</th><th>material</th><th>rotation (°)</th><th>strain tensor (%)</th>"
+            f"{TABLE_CSS}<table class='mlm-table'><tr><th>layer</th><th>material</th><th>rotation (°)</th>"
+            "<th>strain tensor (%)</th>"
             f"<th>residual (Å)</th><th>atoms</th></tr>{layer_rows}</table>"
             f"<p><b>Checks:</b></p><pre>{html.escape(str(report))}</pre>"
-            f"<p><b>Lineage:</b></p><pre>{html.escape(str(lineage(self.run_dir, record.id)))}</pre>")
+            f"<p><b>Lineage:</b></p><pre>{html.escape(str(lineage(run_dir, record.id)))}</pre>")
         return markup
 
     # --- 6. Export -----------------------------------------------------------------------

@@ -448,7 +448,8 @@ trilayer_table["passed"] = [get(hetero_dir, i).worst_layer_residual <= 5e-2 for 
 worst = np.array([r.worst_layer_residual for r in all_trilayers])
 step = np.array([r.residual for r in all_trilayers])
 cumulative = np.array([r.cumulative_residual for r in all_trilayers])
-print(f"{len(trilayer_table)} trilayer candidates, {int(trilayer_table['passed'].sum())} pass max_layer_residual <= 0.05 Å")
+n_passed = int(trilayer_table["passed"].sum())
+print(f"{len(trilayer_table)} trilayer candidates, {n_passed} pass max_layer_residual <= 0.05 Å")
 print(f"max layer residual / last-step residual:   median {np.median(worst / step):.0f}x")
 print(f"max layer residual / cumulative_residual:   median {np.median(worst / cumulative):.1f}x, "
       f"max {np.max(worst / cumulative):.1f}x")
@@ -529,7 +530,8 @@ def by_twist(records, label):
 
 comparison = by_twist(rigid, "rigid").drop(columns="rigid STO strain (%)").merge(
     by_twist(strained, "strained"), on="twist (deg)", how="outer").sort_values("twist (deg)")
-print(f"rigid: {len(rigid)} cell(s), strained: {len(strained)} cell(s) in {EXAMPLE_TWIST_RANGE[0]}–{EXAMPLE_TWIST_RANGE[1]}°")
+low, high = EXAMPLE_TWIST_RANGE
+print(f"rigid: {len(rigid)} cell(s), strained: {len(strained)} cell(s) in {low}–{high}°")
 comparison.reset_index(drop=True)""")
 
 md("""How to read this table:

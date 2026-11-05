@@ -35,6 +35,7 @@ Example
 from __future__ import annotations
 
 import shutil
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -97,7 +98,8 @@ class StackSpec:
         return output if output.is_absolute() else Path(base_dir) / output
 
 
-def _check_keys(section: str, data: dict[str, Any], allowed: set[str], required: set[str] = frozenset()) -> None:
+def _check_keys(section: str, data: dict[str, Any], allowed: AbstractSet[str],
+                required: AbstractSet[str] = frozenset()) -> None:
     unknown = set(data) - allowed
     if unknown:
         raise ValueError(f"stack spec: unknown key(s) in {section}: {sorted(unknown)} (allowed: {sorted(allowed)})")
@@ -114,7 +116,8 @@ def parse_search(data: Optional[dict[str, Any]]) -> SearchSchedule:
     ``interfaces`` maps an interface number k (layer k | layer k+1) to the keys that
     differ for that twist, usually its angle window.
 
-    >>> parse_search({"default": {"nmin": -10, "nmax": 10}, "rounds": {2: {"nmax": 40, "nmin": -40}}}).params_for_round(2).nmax
+    >>> search = {"default": {"nmin": -10, "nmax": 10}, "rounds": {2: {"nmax": 40, "nmin": -40}}}
+    >>> parse_search(search).params_for_round(2).nmax
     40
     """
     data = data or {}

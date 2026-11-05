@@ -1,0 +1,26 @@
+# Run the code-quality checks before every commit:
+#     pip install -e ".[dev]" && pre-commit install
+# or once on all files:  pre-commit run --all-files
+#
+# The hooks are "local": they use the ruff/mypy installed in your environment, so they
+# need no network access and use the same versions as the tests.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: ruff check --fix
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (types)
+        entry: mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: match-py-unchanged
+        name: match.py must not change
+        entry: bash -c 'git diff --cached --quiet -- src/MLM/match.py || { echo "src/MLM/match.py is the reference implementation and must not be modified"; exit 1; }'
+        language: system
+        pass_filenames: false
+        always_run: true

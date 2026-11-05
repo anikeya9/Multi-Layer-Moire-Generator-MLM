@@ -1,10 +1,11 @@
 """The GUI: helpers and a full click-through (plan, run, results, viewer, export) without a browser."""
 
-import numpy as np
 import pytest
 
 pytest.importorskip("ipywidgets")
 pytest.importorskip("py3Dmol")
+
+from conftest import REPO_ROOT  # noqa: E402
 
 from MLM.gui import (  # noqa: E402
     MLMApp,
@@ -15,7 +16,6 @@ from MLM.gui import (  # noqa: E402
     plan_table,
     results_table,
 )
-from conftest import REPO_ROOT  # noqa: E402
 
 
 def test_helpers():

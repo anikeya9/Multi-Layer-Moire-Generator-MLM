@@ -149,7 +149,8 @@ def check_built(
         if between.any():
             closest = float(distances[between].min())
         if closest is not None and closest < min_interlayer:
-            report.problems.append(f"layers too close: {closest:.3f} Å < {min_interlayer} Å between neighbouring layers")
+            report.problems.append(
+                f"layers too close: {closest:.3f} Å < {min_interlayer} Å between neighbouring layers")
     report.info["min_interlayer_distance"] = closest
 
     # 5. symmetry (information only)

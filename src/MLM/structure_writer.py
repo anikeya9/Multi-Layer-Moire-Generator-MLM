@@ -1,8 +1,6 @@
 import numpy as np
-import pandas as pd
 from ase import Atoms
 from ase.io import write
-
 
 # One reader for the whole package (ASE-based; handles scale factors, Direct
 # coordinates and Selective Dynamics). Kept under this name for the notebooks.
@@ -22,11 +20,11 @@ def replicate_atoms(a: np.array,
     for purpose of moire structure creation
     and new lattice vectors which are na*a, nb*b, nc*c
     
-    """ 
-    
+    """
+
     replicated_atom = np.tile(atom_data,(((2 * na ) * ( 2 * nb ) * nc),1) )
-    
-    
+
+
     # Create displacement vectors for each replication
     displacements = np.array([
         ia * a +
@@ -36,12 +34,12 @@ def replicate_atoms(a: np.array,
         for ib in range(-nb, nb )
         for ic in range(nc)
     ])
-    
+
         # Apply displacements to atom positions
     replicated_atom += np.repeat(displacements, natoms, axis=0)
     replicated_type_arr = np.tile(atom_type_arr,((2 * na  ) * ( 2 * nb ) * nc) )
     # new_a = a * na
-    # new_b = b * nb 
+    # new_b = b * nb
     # new_c = c * nc
     new_lattice_vectors = {}
     new_lattice_vectors['a'] = a * na
@@ -80,7 +78,7 @@ def write_vasp_optimized(filename, A1, A2, A3, atom_data, sort_order):
         file.writelines(lines)
         # Use to_csv for efficient DataFrame writing
         atomic_positions.to_csv(file, sep=' ', index=False, header=False, mode='a')
-        
+
 def write_vasp_ase(filename, A1, A2, A3, atom_data):
     """
     Writes a VASP POSCAR file using the ASE library.
@@ -189,9 +187,9 @@ Complexity: O(N) overall — no Python loops on the input, no sequential depende
 """
 
 import warnings
-import numpy as np
-import pandas as pd
 from collections import defaultdict
+
+import numpy as np
 
 
 def _estimate_min_bond(atom_df, n_sample=500):
