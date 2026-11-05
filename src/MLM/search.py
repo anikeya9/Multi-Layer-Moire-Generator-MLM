@@ -26,6 +26,7 @@ import multiprocessing
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -35,6 +36,7 @@ import yaml
 
 from MLM.index import SPEC_FILENAME, RunStore, get
 from MLM.runinfo import RunInfo
+from MLM import fastscan
 from MLM.match import run_and_filter
 from MLM.strain import STRAIN_MODES, fit_strain, scan_tolerance, strain_magnitude
 from MLM.structure import MoireStructure, PathLike, read_primitive
@@ -42,6 +44,10 @@ from MLM.structure import MoireStructure, PathLike, read_primitive
 # ===========================================================================
 # 1. Parameters and filters
 # ===========================================================================
+
+#: Allowed values of ``SearchParams.scanner``.
+SCANNERS = ("fast", "match")
+
 
 @dataclass(frozen=True)
 class SearchParams:
@@ -69,6 +75,13 @@ class SearchParams:
     - ``strain_mode`` — which strain tensors are allowed when a layer has a strain limit
       (see :mod:`MLM.strain`): ``"isotropic"`` (default; ε = e·I), ``"axial"``
       (ε = diag(e_xx, e_yy)) or ``"full"`` (any symmetric ε). Ignored without strain.
+    - ``scanner`` — ``"fast"`` (default): :mod:`MLM.fastscan`, a vectorised version of
+      ``match.run`` that returns identical matches 10–70× faster; ``"match"``: call
+      ``match.run_and_filter`` itself (the reference implementation).
+    - ``include_axes`` — also try lattice points with a zero coefficient (``n = (k, 0)``),
+      which ``match.scan`` skips (``"fast"`` scanner only).
+    - ``max_matches_per_angle`` — ``match.scan`` keeps the 25 shortest matches per angle;
+      a larger number or ``None`` keeps more (``"fast"`` scanner only).
     - ``strain_residual_tol`` — Å; a strained cell is accepted only if straining closes
       it to within this (the point of straining is a perfect match). Mainly matters for
       ``isotropic``/``axial``, which cannot fix a mismatch in cell *shape*.
@@ -89,12 +102,20 @@ class SearchParams:
     angle_cluster_tol: Optional[float] = None
     strain_mode: str = "isotropic"
     strain_residual_tol: float = 1e-6
+    scanner: str = "fast"
+    include_axes: bool = False
+    max_matches_per_angle: Optional[int] = 25
 
     def __post_init__(self) -> None:
         # Accept lists from YAML but store an (immutable, hashable) tuple.
         object.__setattr__(self, "goodangles", tuple(float(a) for a in self.goodangles))
         if self.degmax <= self.degmin or self.degstep <= 0:
             raise ValueError(f"need degmin < degmax and degstep > 0, got {self.degmin}, {self.degmax}, {self.degstep}")
+        if self.scanner not in SCANNERS:
+            raise ValueError(f"scanner must be one of {SCANNERS}, got {self.scanner!r}")
+        if self.scanner == "match" and (self.include_axes or self.max_matches_per_angle != 25):
+            raise ValueError("include_axes / max_matches_per_angle need scanner='fast' "
+                             "(match.scan has them built in: no axes, 25 matches per angle)")
         if self.strain_mode not in STRAIN_MODES:
             raise ValueError(f"strain_mode must be one of {STRAIN_MODES}, got {self.strain_mode!r}")
         if self.nmax <= self.nmin:
@@ -575,12 +596,13 @@ def find_candidates(
     if strained:
         tolerance = scan_tolerance(params.dtol, sum(limits), max(abs(params.nmin), abs(params.nmax)),
                                    lower.lattice_vectors, upper.lattice_vectors, params.degstep)
-    results = run_and_filter(
-        a1, a2, g1, g2,
-        degmin=degmin, degmax=degmax, degstep=params.degstep,
-        dtol=tolerance, nmin=params.nmin, nmax=params.nmax,
-        goodangles=list(params.goodangles),
-    )
+    arguments = dict(degmin=degmin, degmax=degmax, degstep=params.degstep, dtol=tolerance,
+                     nmin=params.nmin, nmax=params.nmax, goodangles=list(params.goodangles))
+    if params.scanner == "match":
+        results = run_and_filter(a1, a2, g1, g2, **arguments)
+    else:
+        results = fastscan.run_and_filter(a1, a2, g1, g2, include_axes=params.include_axes,
+                                          max_per_angle=params.max_matches_per_angle, **arguments)
     cells = cells_from_run(results, offset=twist_offset(lower))
     if strained and cells:
         cells = strain_cells(cells, lower, upper, params, limits)
@@ -903,7 +925,8 @@ def build_stack(
       search it takes part in, i.e. while it is still a single layer; blocks built in
       earlier rounds stay rigid. The strain mode comes from the search parameters.
     - ``workers``: processes for the searches of one step (they are independent);
-      ``None`` or 0 = all CPU cores. Results are identical to ``workers=1``.
+      ``None`` or 0 = all CPU cores. Results are identical to ``workers=1``. Works in
+      notebooks; in a script, call ``build_stack`` under ``if __name__ == "__main__":``.
     - ``resume=True`` continues an interrupted run in ``run_dir``: steps recorded in
       ``progress.yaml`` are not searched again. Refused if the job changed.
     - ``should_stop``: called before every search; returning True stops the run cleanly
@@ -1141,7 +1164,15 @@ def _run_step(
                     for pending in futures:
                         pending.cancel()
                     return
-                yield future.result()
+                try:
+                    yield future.result()
+                except BrokenProcessPool as error:
+                    raise RuntimeError(
+                        "parallel search workers could not start. In a Python script, put the "
+                        "code that calls build_stack under `if __name__ == \"__main__\":` (needed by "
+                        "multiprocessing); scripts piped through stdin cannot use workers. "
+                        "Or use workers=1."
+                    ) from error
 
     passed: dict[str, MoireStructure] = {}  # keyed by id: identical recipes count once
     n_found = 0
