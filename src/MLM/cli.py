@@ -6,6 +6,8 @@ Commands
 ``find``   query a run's index table     ``python -m MLM find runs/bto_trilayer_demo --n-layers 3``
 ``show``   print a recipe and lineage    ``python -m MLM show runs/bto_trilayer_demo <id>``
 ``write``  rebuild atoms, write a file   ``python -m MLM write runs/bto_trilayer_demo <id> --fmt lammps``
+``check``  sanity checks of a structure ``python -m MLM check runs/bto_trilayer_demo <id>``
+``gui``    graphical interface (Voilà)  ``python -m MLM gui``
 
 Every command is a thin wrapper around the Python API (``MLM.spec``, ``MLM.index``,
 ``MLM.build``); see ``docs/IMPLEMENTATION_NOTES.md``.
@@ -70,6 +72,12 @@ def _cmd_write(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gui(args: argparse.Namespace) -> int:
+    from MLM.gui import launch
+
+    return launch(port=args.port, open_browser=not args.no_browser)
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     report = check_structure(args.run_dir, args.id, interlayer_gap=args.gap, vacuum=args.vacuum)
     print(report)
@@ -126,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--gap", type=float, default=3.0, help="interlayer gap in Å (default 3)")
     check.add_argument("--vacuum", type=float, default=50.0, help="vacuum along c in Å (default 50)")
     check.set_defaults(handler=_cmd_check)
+
+    gui = commands.add_parser("gui", help="open the graphical interface in the browser (Voilà)")
+    gui.add_argument("--port", type=int, default=None)
+    gui.add_argument("--no-browser", action="store_true", help="only start the server")
+    gui.set_defaults(handler=_cmd_gui)
     return parser
 
 
