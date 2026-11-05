@@ -94,7 +94,7 @@ reconstructed on demand from the primitive POSCAR(s) named in the lineage.
 | Module | Role |
 |---|---|
 | `match.py` | Solve-and-round bilayer coincidence search (`scan`→`run`→`filtermatches`→`run_and_filter`). O(N²). |
-| `moire_lattice_vector_finder.py` | Older O(N⁴) Numba + multiprocessing brute force; has `read_vasp`. |
+| `moire_lattice_vector_finder.py` | Older O(N⁴) Numba + multiprocessing brute force; its `read_vasp` now delegates to `MLM.io`. |
 | `structure_writer.py` | `replicate_atoms`, `select_atoms_fractional` (fractional-fold dedup), VASP/LAMMPS export via ASE. |
 | `tool.py` | `load_layer_basis(vaspfile)`, `angle_in_degrees`. |
 | `angle_between.py` | Angle helper. |
@@ -465,8 +465,9 @@ thin wrapper read into that API — the reproducible record of a job (decision 1
 - **`match.scan` skips coefficients with a zero component** (`n1 == 0 or n2 == 0`) and
   keeps only the 25 shortest matches per angle. Cells such as "the bilayer cell itself"
   (`n = (1,0),(0,1)`) can therefore never be found in round 2; the graphene trilayer
-  reference shows the consequence (a 3× cell). Left unchanged because `match.py` must not
-  be modified.
+  reference shows the consequence (a 3× cell). `match.py` is unchanged; the vectorised
+  scanner `MLM.fastscan` (§12) offers both as options (`include_axes`,
+  `max_matches_per_angle`).
 - **Schema evolution:** filename scheme and possibly additional metadata fields may
   change as the workflow matures; the authoritative `id` lives in the file to insulate
   against renames.
@@ -504,7 +505,7 @@ residual ≈ 1e-11 Å.
 | 37 | Sharing between the two layers | in proportion to the layers' limits (minimise Σ‖ε‖²/limit): limit 0 = rigid substrate; equal limits = average lattice | generalises the two common conventions; it is also the split most likely to respect both limits (each layer uses the same fraction of its limit) |
 | 38 | Strain grid step *t* | dropped *(owner: exact solve)* | with an exact solve a step is not needed |
 | 39 | Which layers *(owner)* | only single layers, in the first search they take part in; blocks from earlier rounds stay rigid | keeps already-exact inner interfaces exact |
-| 40 | Scan tolerance | widened automatically to `min(0.45, max(dtol, (lim_A + lim_B + Δθ/2)·|m|max))` | a match needing strain ε has fractional error ≈ ε·|m| in `match.scan`; a coarse `degstep` (0.1°) is enough because δ refines the twist |
+| 40 | Scan tolerance | *(revised in §12, #48)* fast scanner: `dtol + 1.25·(lim_A + lim_B + Δθ/2)·|m|` per point; the `match` scanner keeps the original global `min(0.45, max(dtol, (lim_A + lim_B + Δθ/2)·|m|max))` | a match needing strain ε has fractional error ≈ ε·|m| in `match.scan`; a coarse `degstep` (0.1°) is enough because δ refines the twist |
 | 41 | What is dropped (not saved) | cells needing more than a layer's limit, cells whose exact twist leaves `[degmin, degmax)`, cells the allowed strain cannot close (residual > `strain_residual_tol`, default 1e-6 Å) | these are not commensurate under the job's rules, so they are not candidates (like a good-angle mismatch) |
 | 42 | Duplicates *(owner: smallest strain)* | one cell per (lower lattice, upper lattice), smallest strain; supercells at the same exact twist removed unless `keep_supercells` | same rules as without strain |
 | 43 | Atoms | in-plane only: x, y of every atom move with the cell (fractional coordinates kept); z unchanged (no Poisson effect) *(owner)* | the usual first approximation; relax with DFT/MD afterwards |
@@ -518,3 +519,27 @@ of −1e-17 to exactly 1.0, outside [0, 1), which made SciPy's periodic KDTree f
 commensurate (strained) cells put atoms on the cell boundary, so this showed up now; such
 coordinates are now folded to 0.
 
+
+---
+
+## 12. Quality improvements (branch `quality-improvements`)
+
+Built on `with-straining`. Usage and measured numbers: `docs/IMPLEMENTATION_NOTES.md` §9.
+
+| # | Item | Choice | Convention / reason |
+|---|---|---|---|
+| 45 | Reading layer files | one reader, `MLM.io`, via ASE: any POSCAR (scale factor, Direct, Selective Dynamics), CIF | the three `np.loadtxt` copies failed on common POSCAR variants; identical results on all 110 repository POSCARs; the old names (`mlf.read_vasp`, `sw.read_vasp`) delegate to it |
+| 46 | Recipe format version | `schema_version` (now 3) in every YAML; `migrate_record` upgrades older files; not hashed | formats change; old runs must keep loading and keep their ids |
+| 47 | Scanner | `scanner: fast` (default) = `MLM.fastscan`, vectorised over angles; `match` = the reference | bit-identical DataFrames to `match.run` on 6 reference cases, 10–70× faster; `match.py` unchanged (SHA-256 guard) |
+| 48 | Strained scan tolerance | per point `dtol + 1.25·(lim_A + lim_B + Δθ/2)·|m|` (fast scanner) | a strain ε shifts the upper coordinates by ≈ ε·|m|; the old global tolerance (#40) made every short point "match" at larger limits and the 25-match cap then dropped the real cells (1 %/1 %: 0 cells) |
+| 49 | Matches kept per angle | `max_matches_per_angle: auto` = 25 rigid (as `match.scan`), 200 strained; any int or `None` | with strain any cell larger than ≈ a/ε matches; unlimited explodes in round 2 (≈ 2 min vs 1.5 s), 25 crowds out good cells; 200 is complete at 1 %/1 % and finds ≈ 80 % at 2 %/2 % |
+| 50 | Parallel searches | `workers` processes for the searches of one step, `spawn` start method, results stored in submission order | `fork` deadlocked with polars' thread pool; results identical to `workers=1` |
+| 51 | Resume / stop | `progress.yaml` records finished steps and the job; `resume=True` skips them and refuses a changed job; `should_stop` polled before each search | long runs must survive interruptions; the GUI's Stop button uses it |
+| 52 | Run metadata | `run_info.yaml`: status, MLM version, git commit + dirty flag, Python/NumPy/ASE, start/end, per-step timings | reproducibility |
+| 53 | Index format | `index_format: csv` (default) or `sqlite` (indexed; `find` filters in SQL) | CSV stays human-readable; SQLite for very large runs (measured gain is modest at 100k rows) |
+| 54 | Structure checks | counts, composition, overlaps (< 0.5 Å), closest pair per layer vs the primitive layer (± 0.02 Å), closest pair between neighbouring layers (≥ 1 Å), space group (spglib, info) | catch folding errors and bad stacking before DFT/MD; `write_structure(check=True)` warns |
+| 55 | Stacking options | `shifts`: per layer, fractional of the layer's own (strained) primitive cell, applied before rotation; `poisson_ratios`: ε_zz = −ν/(1−ν)·(ε_xx+ε_yy) about the layer's middle | stacking registry (AB = 1/3, 2/3) and the thin-film (biaxial plane-stress) thickness response |
+| 56 | Elastic constants | per layer 2D Young's modulus Y (N/m) and ν; energy W = Y/(2(1−ν²))·(ε_xx² + ε_yy² + 2ν ε_xx ε_yy + 2(1−ν) ε_xy²); with constants on both strained layers the split minimises ΣW (else ∝ limits); `strain_energy` in meV/Å² of cell | standard isotropic plane-stress energy; energy minimum = stiffer layer strains less (ratio 1/Y) |
+| 57 | Equivalent twists | `merge_equivalent_twists: none` (default) / `rotation` (θ ≡ θ + 360°/n, n = lattice rotation order of the upper *single* layer) / `rotation+mirror` (also θ ≡ −θ); keep the smallest \|θ\| | lattice symmetry, not the basis; equivalence is up to an in-plane translation (rotation) or a mirror image (enantiomer); never applied to blocks |
+| 58 | GUI | ipywidgets + py3Dmol in Jupyter; the same app as a web page through Voilà (`mlm gui`) | no server code to maintain; runs in a background thread with progress and Stop |
+| 59 | Tooling | ruff (E, F, W, I, B; `Optional[...]` style kept), mypy, pre-commit (local hooks), GitHub Actions (3.10/3.12/3.13: lint, types, match.py hash, tests, notebooks) | the original legacy modules are excluded from lint/types and kept as they are |

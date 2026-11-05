@@ -345,3 +345,28 @@ LAMMPS. Notebook executed, 0 errors.
 The explorer notebook now ends with both worked examples: 1. the rigid PTO / STO / PTO
 heterostructure (from `claude-edits`), 2. the strained PTO / STO heterostructure.
 
+
+## 2026-11-05 — Branch `quality-improvements` (from `with-straining`)
+
+Owner request: implement every suggested improvement (GUI and the rest) and make sure they
+work. Done, step by step, each with tests (161 tests, ~33 s) and pushed:
+
+A. ASE-based reading (`MLM.io`), duplicate helpers unified, `findmatch.py` removed, `mlm`
+   command; numba no longer imported to read a file.
+B/D. `schema_version` + migration; `run_info.yaml`; parallel searches (`workers`, spawn),
+   `resume` (`progress.yaml`), `should_stop`, `progress_callback`.
+C. `MLM.fastscan`: bit-identical to `match.run`, 10–70× faster (153 s → 2.3 s); options
+   `include_axes`, `max_matches_per_angle`.
+E. SQLite index option.
+F/G. `MLM.checks`; lateral shifts; Poisson thickness response.
+H. Elastic constants: energy-minimising strain sharing, `strain_energy`; and a fix of the
+   strained scan (per-point tolerance, 200-match cap): larger strain limits could return
+   nothing before.
+I. Optional merging of symmetry-equivalent twists.
+J. GUI (`MLM.gui`, `notebooks/mlm_gui.ipynb`, `mlm gui` via Voilà), verified in headless
+   Chromium (`dev/check_gui_in_browser.js`), screenshots in `docs/images/`.
+K. ruff, mypy, pre-commit, GitHub Actions. Incident: the first hook rewrote `match.py`
+   (commit 18486f9); restored in the next commit, now guarded by a SHA-256 check.
+L. Docs: DESIGN.md §12 (#45–#59), IMPLEMENTATION_NOTES.md §9; notebooks re-executed.
+
+Not done (by instruction): no merge into `dev`/`master`, no PR.

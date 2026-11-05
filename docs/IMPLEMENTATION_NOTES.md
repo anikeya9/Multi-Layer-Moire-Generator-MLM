@@ -22,7 +22,7 @@ Companion documents:
 src/MLM/
   match.py                     (unchanged)  numeric core: scan → run → filtermatches → run_and_filter
   structure_writer.py          (unchanged)  replicate_atoms, select_atoms_fractional, write_*_ase
-  moire_lattice_vector_finder  (unchanged)  read_vasp is reused for POSCAR reading
+  moire_lattice_vector_finder  (legacy)     its read_vasp now delegates to MLM.io (ASE-based)
   angle_between.py             (unchanged on this branch; dev already had the np.clip fix)
   ─── new ───────────────────────────────────────────────────────────────────────────
   structure.py   MoireStructure record: schema, YAML round trip, id + hash, POSCAR reading
@@ -32,7 +32,7 @@ src/MLM/
   spec.py        stack-spec loader, run_stack_spec
   build.py       atoms from a recipe's lineage, write_structure (VASP / LAMMPS)
   cli.py         python -m MLM run | find | show | write   (+ __main__.py)
-tests/           81 tests, ~35 s
+tests/           161 tests, ~35 s
 examples/        stack specs + one tiny committed run (examples/runs/bto_trilayer_demo)
 dev/             demo notebooks (+ the scripts that generate them), YAML-vs-index benchmark
 ```
@@ -145,7 +145,7 @@ Take the BTO trilayer job `examples/bto_trilayer_demo.yaml`.
 
 1. **Spec → roots.** `spec.load_stack_spec` reads the YAML with `yaml.safe_load` and checks
    every key (a typo such as `nmaxx` is an error, not silently ignored). For each layer,
-   `MoireStructure.from_poscar` reads the POSCAR (`read_vasp`, cached) and makes a level-0
+   `MoireStructure.from_poscar` reads the POSCAR (`MLM.io`, via ASE, cached) and makes a level-0
    record: in-plane lattice vectors, `parents: []`, `twist: null`. Its id is
    `bto_1_<hash>`; the three identical layers have the same id.
 
@@ -287,18 +287,18 @@ slower than one CSV; it was not used because the design mandates `yaml.safe_load
 - **`match.scan` skips coefficients with a zero component** and keeps only the 25 shortest
   matches per angle. In round 2+ a cell equal to the lower block's cell (n = (1,0),(0,1))
   can therefore never be found (graphene trilayer: the smallest cell found is 3× the
-  bilayer cell). `match.py` was not modified, so this stays.
+  bilayer cell). `match.py` was not modified; the vectorised scanner (§9) lifts both limits
+  as options (`include_axes`, `max_matches_per_angle`).
 - **`cumulative_residual` (max rule) underestimates.** BTO trilayer at twist 14.25°: 5.7e-5
   vs 7.6e-5 Å true; PTO/STO/PTO: true error typically 5× larger (0.02–0.3 Å). Both are kept;
   each stack spec chooses whether to filter on `max_cumulative_residual` and/or
   `max_layer_residual` (owner decision, §6).
-- `read_vasp` ignores the POSCAR scale factor (line 2) and needs Cartesian coordinates;
-  all repository POSCARs satisfy this. `MoireStructure.from_poscar` refuses cells whose
-  a, b are not in-plane.
+- Layer files are read with ASE (§9): any POSCAR variant and CIF. `MoireStructure.from_poscar`
+  refuses cells whose a, b are not in-plane.
 - Docstring examples that need a run directory are marked `# doctest: +SKIP`; all others
   are executed by `tests/test_docstrings.py`.
-- Not done: no performance work on `match.py` (not allowed), no parallelism over the
-  searches of a round (each search is independent, so this would be easy to add).
+- `match.py` itself is untouched (guarded by a SHA-256 check in pre-commit and CI); the
+  speed-up and parallelism live in `MLM.fastscan` and `build_stack(workers=...)` (§9).
 
 ---
 
@@ -324,12 +324,10 @@ Full list with reasoning in `docs/DESIGN.md` §8 (#14–#32).
 Left alone on purpose (still open in DESIGN.md §10): a top-K beam cap (`max_candidates` raises `NotImplementedError`), tuning per-round
 parameters, the final naming scheme.
 
-Suggested next steps:
-- Parallelise the `lower × upper` searches of a step (`concurrent.futures`): they are
-  independent, and the round-2 sweeps dominate the run time.
-- Allow `n1 = 0` / `n2 = 0` coefficients in a copy of `scan` if the owner wants
-  "the lower cell itself" as a candidate in later rounds.
-- Store the interlayer gap / vacuum used for a written structure next to the file.
+Suggested next steps (after the quality-improvements branch, §9):
+- Store the interlayer gap / vacuum / shifts used for a written structure next to the file.
+- Elastic constants of anisotropic layers (the energy uses an isotropic plane-stress form).
+- Parallelise inside a single search (angle chunks), for round 1 of very wide scans.
 
 ---
 
@@ -365,18 +363,124 @@ exact twist leaves the window are dropped; per cell the smallest strain is kept.
 
 | case | result |
 |---|---|
-| PTO/STO bilayer, 1–45°, step 0.1°, STO ≤ 1 % (`examples/pto_sto_strained_demo.yaml`) | 21 exact cells in 2.0 s, residual ≤ 2e-11 Å; e.g. 7.13° needs −0.076 % on STO (unstrained the same cell is 0.024 Å off), 17.74° needs 0.10 %, 8.13° 0.16 % |
+| PTO/STO bilayer, 1–45°, step 0.1°, STO ≤ 1 % (`examples/pto_sto_strained_demo.yaml`) | **80** exact cells in ~2 s, residual ≤ 2e-11 Å (21 before the scan fix of §9); e.g. 7.13° needs −0.076 % on STO (unstrained the same cell is 0.024 Å off), 17.74° needs 0.10 %, 8.13° 0.16 % |
 | aligned PTO/STO cell, twist 0 | STO strain = a_PTO/a_STO − 1 = −0.847 % exactly; with limits 0.5/0.5 % the split is +0.42 % / −0.43 % |
 | PTO/STO/PTO, limits 0 / 1 / 1 %, 9–10° | exact trilayers; layer 1 unstrained, the bilayer block keeps its strain in round 2 |
 | PTO/STO/PTO in `full` mode, limits 0.5 / 0.5 / 1 %, 7.0–7.3° | 7.125° / 7.125°, strains +0.038 / −0.038 / +0.038 %, 2716 atoms, rebuilt with the expected count per layer |
 | rectangular or sheared upper cell (synthetic) | `isotropic` leaves the shape mismatch; `axial` (rectangular) and `full` (rectangular and sheared) close it exactly |
 
-**Limitations**
-- No elastic constants: strain is shared in proportion to the limits, not to stiffness.
-- No Poisson effect: the layer thickness (z) is not changed.
+**Limitations** (several were lifted on the quality-improvements branch, §9: elastic
+constants, Poisson thickness response, the scan tolerance and the 25-match cap)
 - `isotropic`/`axial` cannot close shape mismatches; use `full` for different lattice
   symmetries (e.g. square on hexagonal).
-- The widened tolerance makes the scan return many more raw matches; keep `nmax` modest
-  (±10 in round 1) and use a coarse `degstep` (0.1°).
-- `match.scan` still keeps only the 25 shortest matches per angle.
+- With strain ε any cell larger than about a/ε can be matched, so strained searches keep the
+  200 shortest matches per angle (`max_matches_per_angle="auto"`); set `None` for all.
 
+
+---
+
+## 9. Quality improvements (branch `quality-improvements`)
+
+Conventions and decisions: `docs/DESIGN.md` §12 (#45–#59). Everything below was run and
+checked in this branch; the numbers are measured.
+
+### 9.1 Graphical interface
+
+```bash
+mlm gui
+```
+or, in Jupyter, `notebooks/mlm_gui.ipynb`:
+```python
+from MLM.gui import MLMApp
+MLMApp().display()
+```
+
+| Tab | What it does |
+|---|---|
+| 1 Stack | layers (file picker, label, strain %, Young's modulus, ν; add / remove / reorder), one twist-range slider per interface, cell angle, residual limits, strain mode, run name; advanced settings (angle step, tolerance, n ranges, scanner, axis points, twist merging, workers, index format) |
+| 2 Plan | dry run: combination, interface, window, n range, strain limits and time estimate per step |
+| 3 Run | runs in a background thread: live log, progress bar, Stop, Resume |
+| 4 Results | open any run directory, filter, candidate list, scatter plot (twist vs cell area, coloured by residual) |
+| 5 Viewer | 3D (py3Dmol): colour by layer / element, show/hide layers, cell, 1×1 / 2×2 / 3×3, top / side / perspective; layer table (rotation, strain tensor, residual, atoms), checks, lineage |
+| 6 Export | VASP / LAMMPS with gap, vacuum, lateral shifts, Poisson; download links (also the stack spec) |
+
+Verified: `tests/test_gui.py` clicks through every tab in Python (plan, run, results,
+viewer, export with shifts, stop, bad input). `dev/check_gui_in_browser.js` serves the page
+with Voilà and drives it in headless Chromium: all six tabs work, no page errors, the 3D
+viewer creates its WebGL canvas. Screenshots: `docs/images/gui_*.png`.
+
+### 9.2 Faster search, parallel runs, resume
+
+| | before | after |
+|---|---|---|
+| one search, notebook window θ+1…θ+60.01°, n ±40 (BTO bilayer cell + layer) | 153 s (`match.run`) | **2.3 s** (`fastscan`, identical 2052 pairs) |
+| BTO bilayer 1–45°, n ±10 | 5.1 s | 0.08 s |
+| full notebook-style BTO trilayer (19 bilayers, 11 round-2 searches, 257 trilayers) | ~50 min estimated | 23 s; **8 s with 4 workers** (same 257) |
+| test suite | 54 s | ~33 s for 161 tests |
+
+```python
+build_stack(roots, schedule, filters, run_dir="runs/x", workers=4)        # parallel (notebooks, or scripts under __main__)
+build_stack(roots, schedule, filters, run_dir="runs/x", resume=True)      # continue an interrupted run
+SearchParams(..., include_axes=True, max_matches_per_angle=None)          # lift match.scan's two limits
+```
+```bash
+mlm run spec.yaml --workers 4 --resume --index-format sqlite
+```
+
+### 9.3 Physics additions
+
+```python
+from MLM.strain import Elastic
+build_stack([pto, sto], schedule, filters, strain_limits=[1.0, 1.0],
+            elastic=[Elastic(young=150.0, poisson=0.3), Elastic(young=150.0, poisson=0.3)])
+write_structure(run_dir, sid, shifts=[None, (1/3, 2/3)], poisson_ratios=[None, 0.25])
+SearchParams(..., merge_equivalent_twists="rotation+mirror")
+```
+
+| Check | Result |
+|---|---|
+| stiffness 100 vs 300 N/m, equal limits | strains 0.638 % / −0.215 % (ratio 3 = 1/Y ratio) |
+| energy formula | biaxial W = Y/(1−ν)·e², pure shear W = Y/(1+ν)·ε_xy² (tests) |
+| Poisson ν = 0.25 on STO strained −0.847 % | thickness × (1 + 0.565 %) exactly; unstrained layer unchanged |
+| lateral shift (½, ½) of layer 2 | layer moves rigidly (≤ 2.3e-4 Å after folding = its residual), others unchanged |
+| equivalent twists, BTO 22–113° | `rotation` merges 22.62° and 112.62°, keeps 67.38°; `rotation+mirror` also merges 67.38° |
+| strained scan fix, PTO/STO 1–45° | STO ≤ 1 %: 80 exact cells (was 21); 1 %/1 %: 116 (was 0); 2 %/2 %: 169 |
+
+### 9.4 Checks on written structures
+
+```bash
+mlm check runs/bto_trilayer_demo bto_3_22.62_36.87_015688
+```
+```
+checks passed: 1365 atoms, composition Ba390O780Ti195
+  min_distance: 1.8418 Å
+  min_interlayer_distance: 5.9754 Å
+  space_group: P2 (3)
+```
+(The 6 Å between layers comes from the notebooks' stacking rule: 3 Å above the top atom,
+plus the ~3 Å at which each POSCAR layer starts above z = 0.) Tests make each check fail
+on purpose: layers pushed together, atoms removed.
+
+### 9.5 Inputs, storage, tooling
+
+- **ASE reader**: identical to the old reader on all 110 repository POSCARs; also Direct,
+  scale factor, Selective Dynamics and CIF (tests). Importing the package no longer loads
+  numba: warm import 2.2 s → 0.8 s.
+- **`schema_version` 3**, migration of version-1/2 files (tests); `run_info.yaml` and
+  `progress.yaml` in every run directory.
+- **SQLite index** (`dev/benchmark_index_formats.py`, 100 000 rows): find 0.15 s vs 0.24 s
+  (CSV), full load 0.62 s vs 0.25 s — useful mainly when a table is too large to load.
+- **Tooling**: `ruff check .`, `mypy`, `pre-commit run -a`, `.github/workflows/tests.yml`.
+
+### 9.6 What went wrong on the way (fixed)
+
+- The first pre-commit configuration ran `ruff --fix` on file names passed explicitly,
+  which bypasses ruff's exclude list: it rewrote `match.py` and three legacy modules, and
+  that went into commit `18486f9`. The next commit restored them (match.py is
+  byte-identical to `dev`), ruff now uses `force-exclude`, and a SHA-256 guard of
+  `match.py` runs in pre-commit and CI. The bad version remains in that one intermediate
+  commit of the branch history.
+- `fork`-based worker processes deadlocked (polars thread pool) → `spawn`.
+- Background GUI runs printed nothing (`with output:` does not capture from threads) →
+  `Output.append_stdout`, and the results plot is a PNG `Image` widget.
+- CI's newer NumPy/ASE stubs found 6 typing issues that the local versions did not.
