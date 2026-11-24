@@ -29,7 +29,7 @@ fast example (the whole notebook runs in about two minutes):
 |---|---|
 | 1 | Reading layers: POSCAR (any variant) and CIF |
 | 2 | A bilayer search; the fast scanner vs the reference `match.py` |
-| 3 | N-layer stacks: tournament tree, a twist window per interface, dry run, run metadata |
+| 3 | N-layer stacks: tournament tree, a twist window per interface, dry run, run metadata; a 5-layer graphene stack |
 | 4 | Parallel searches |
 | 5 | Stop and resume a run |
 | 6 | Jumping to structures: index, `find`, `get`, `lineage`; SQLite index |
@@ -165,6 +165,48 @@ md("""Every run directory records what produced it (`run_info.yaml`) and which s
 (`progress.yaml`):""")
 
 code("""print((TOUR / "bto_4layer" / "run_info.yaml").read_text())""")
+
+md("""### Five layers of graphene, four different twists
+
+With five layers the tree runs three rounds: (L1+L2) and (L3+L4), then (L1-2 + L3-4) at
+interface 2 (L5 is carried along), then (L1-4 + L5) at interface 4.
+
+Each twist is measured from the layer below. Choosing them takes some care: every layer must
+fit one common cell, and twists from different coincidence families multiply its size. Graphene
+is symmetric under 60°, so with 21.79°, 38.21°, 27.80° and 32.20° the five layers point at
+0°, 21.79°, 60° ≡ 0°, 87.80° ≡ 27.80° and 120° ≡ 0°: only two families, the √7 cell of 21.79°
+and the √13 cell of 27.80°. Their common cell holds 7 × 13 = 91 primitive cells, 910 atoms.
+Finding it needs the axis points of §7 (`include_axes=True`); without them the smallest cell
+found is three times larger. Four twists from four families (e.g. 21.79°, 13.17°, 27.80°,
+9.43°) give no cell within these coefficient ranges.""")
+
+code("""graphene = roots["graphene"]
+twists = [21.787, 38.213, 27.796, 32.204]   # interface k | k+1, k = 1 … 4
+schedule5 = SearchSchedule(
+    SearchParams(nmin=-10, nmax=10, goodangles=(60.0,), degstep=0.001, include_axes=True),
+    rounds={2: {"nmin": -20, "nmax": 20}, 3: {"nmin": -30, "nmax": 30}},
+    interfaces={k: {"degmin": t - 0.05, "degmax": t + 0.05} for k, t in enumerate(twists, start=1)},
+)
+five = build_stack([graphene] * 5, schedule5, Filters(max_residual=1e-3, max_layer_residual=1e-3),
+                   run_dir=TOUR / "graphene_5layer", log=None)
+print(five.summary())
+g5 = min(five.final, key=lambda r: r.cell_area)
+print("\\nlayer orientations (deg):", np.round(g5.layer_rotations, 3))
+print("twist per interface (deg):", np.round(np.diff(g5.layer_rotations), 3))
+print(f"cell: {g5.cell_area:.1f} Å² = {g5.cell_area / graphene.cell_area:.0f} primitive cells per layer")""")
+
+md("""Writing it: `interlayer_gap` is measured from the top of one layer to z = 0 of the next
+layer's POSCAR, and this graphene POSCAR has its atoms at z = 5.85 Å. For graphite-like 3.35 Å
+between the sheets, subtract that height. The checks (§10) run before the file is written,
+including the PBC seam check, which compares every atom's neighbours with a perfect sheet.""")
+
+code("""from MLM.build import check_structure, write_structure
+from MLM.structure import read_primitive
+
+gap = 3.35 - read_primitive(LAYER_FILES["graphene"])["coords"][:, 2].min()
+path = write_structure(TOUR / "graphene_5layer", g5.id, fmt="vasp", interlayer_gap=gap)
+print(path)
+print(check_structure(TOUR / "graphene_5layer", g5.id, interlayer_gap=gap))""")
 
 # --- 4 -------------------------------------------------------------------------------------
 md("""## 4. Parallel searches
