@@ -27,15 +27,11 @@ def replicate_atoms(a: np.array,
     replicated_atom = np.tile(atom_data,(((2 * na ) * ( 2 * nb ) * nc),1) )
     
     
-    # Create displacement vectors for each replication
-    displacements = np.array([
-        ia * a +
-        ib * b +
-        ic * c
-        for ia in range(-na, na )
-        for ib in range(-nb, nb )
-        for ic in range(nc)
-    ])
+    # Create displacement vectors for each replication, vectorised: indexing="ij" gives
+    # the same order as the loops "for ia: for ib: for ic" (ia slowest, ic fastest).
+    ia, ib, ic = (grid.reshape(-1, 1) for grid in
+                  np.meshgrid(np.arange(-na, na), np.arange(-nb, nb), np.arange(nc), indexing="ij"))
+    displacements = ia * np.asarray(a) + ib * np.asarray(b) + ic * np.asarray(c)
     
         # Apply displacements to atom positions
     replicated_atom += np.repeat(displacements, natoms, axis=0)

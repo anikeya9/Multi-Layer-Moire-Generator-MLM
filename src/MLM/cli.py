@@ -21,7 +21,8 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from MLM.build import FORMATS, check_structure, write_structure
+from MLM.build import FORMATS, _build_from_run, check_structure, default_out, default_search_dirs, write_built
+from MLM.checks import check_built
 from MLM.index import find, get, lineage
 from MLM.spec import run_stack_spec
 
@@ -65,10 +66,14 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_write(args: argparse.Namespace) -> int:
-    path = write_structure(args.run_dir, args.id, fmt=args.fmt, out=args.out,
-                           interlayer_gap=args.gap, vacuum=args.vacuum, check=False)
+    # Build once, check (without the space group: spglib takes minutes on large cells), write.
+    search_dirs = default_search_dirs(args.run_dir)
+    built = _build_from_run(args.run_dir, args.id, args.gap, args.vacuum, search_dirs, None, None)
+    report = check_built(built, search_dirs=search_dirs, symmetry=False)
+    out = args.out if args.out is not None else default_out(args.run_dir, args.id, args.fmt)
+    path = write_built(built, args.fmt, out)
     print(path)
-    print(check_structure(args.run_dir, args.id, interlayer_gap=args.gap, vacuum=args.vacuum))
+    print(report)
     return 0
 
 

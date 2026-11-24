@@ -125,6 +125,21 @@ def _rotate_xy(frame: pd.DataFrame, angle_deg: float) -> pd.DataFrame:
     return rotated
 
 
+def primitive_in_plane(poscar: str, strain: np.ndarray, search_dirs: Sequence[PathLike] = ()) -> np.ndarray:
+    """Rows a1, a2 of the strained primitive cell."""
+    return read_primitive(poscar, search_dirs)["in_plane"] @ (np.eye(2) + strain).T
+
+
+def _crop_to_cell(frame: pd.DataFrame, a1: np.ndarray, a2: np.ndarray, margin: float) -> pd.DataFrame:
+    """Keep the atoms within ``margin`` Å of the cell spanned by a1, a2 (in-plane)."""
+    cell = np.column_stack([a1, a2])
+    frac = np.linalg.solve(cell, frame[["x", "y"]].to_numpy().T).T
+    area = abs(np.linalg.det(cell))
+    rim = margin * np.array([np.linalg.norm(a2), np.linalg.norm(a1)]) / area  # margin / cell height, per axis
+    keep = np.all((frac > -rim) & (frac < 1 + rim), axis=1)
+    return frame[keep].reset_index(drop=True)
+
+
 def _strain_xy(frame: pd.DataFrame, strain: np.ndarray) -> pd.DataFrame:
     """Apply the in-plane strain ``(I + ε)`` to x, y (fractional coordinates kept, z unchanged)."""
     if not np.any(strain):
@@ -217,6 +232,10 @@ def build_atoms(
             frame["z"] = frame["z"] + interlayer_gap + top_of_previous
         top_of_previous = float(frame["z"].max())
         frame = _rotate_xy(frame, angle)
+        # The disc holds ~10x more atoms than the cell; folding only needs the cell plus a
+        # rim, so drop the rest now (much less memory and work in select_atoms_fractional).
+        primitive_vectors = primitive_in_plane(poscar, strains[position], search_dirs)
+        frame = _crop_to_cell(frame, a1, a2, margin=2.0 * np.linalg.norm(primitive_vectors, axis=1).sum())
         frame["layer"] = position
         layers.append(frame)
         primitive_area = abs(np.linalg.det(read_primitive(poscar, search_dirs)["in_plane"]))
@@ -320,11 +339,22 @@ def write_structure(
     if check:
         from MLM.checks import check_built
 
-        report = check_built(built, search_dirs=search_dirs, symmetry=False)
+        report = check_built(built, search_dirs=search_dirs, symmetry=False, poisson_ratios=poisson_ratios)
         if not report.ok:
             warnings.warn(f"{structure_id}: {report}", RuntimeWarning, stacklevel=2)
+    return write_built(built, fmt, out if out is not None else default_out(run_dir, structure_id, fmt))
 
-    out = Path(out) if out is not None else Path(run_dir) / "structures" / f"{structure_id}{FORMATS[fmt]}"
+
+def default_out(run_dir: PathLike, structure_id: str, fmt: str) -> Path:
+    """``<run_dir>/structures/<id>.vasp`` (or ``.data``)."""
+    return Path(run_dir) / "structures" / f"{structure_id}{FORMATS[fmt]}"
+
+
+def write_built(built: BuiltStructure, fmt: str, out: PathLike) -> Path:
+    """Write already-built atoms as a VASP POSCAR or LAMMPS data file (no checks)."""
+    if fmt not in FORMATS:
+        raise ValueError(f"fmt must be one of {sorted(FORMATS)}, got {fmt!r}")
+    out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     a1, a2, a3 = built.cell
     atoms = built.atoms[["type", "x", "y", "z"]]
@@ -367,5 +397,5 @@ def check_structure(
     if search_dirs is None:
         search_dirs = default_search_dirs(run_dir)
     built = _build_from_run(run_dir, structure_id, interlayer_gap, vacuum, search_dirs, shifts, poisson_ratios)
-    return check_built(built, search_dirs=search_dirs)
+    return check_built(built, search_dirs=search_dirs, poisson_ratios=poisson_ratios)
 
