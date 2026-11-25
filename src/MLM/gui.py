@@ -13,7 +13,8 @@ Tabs, in the order of a job:
                  interface, cell angle, residual limits, strain mode, advanced settings.
 2. **Plan**    — the dry run: which pair of layers is joined in which round, and a time estimate.
 3. **Run**     — run in the background with a progress bar; Stop, and Resume later.
-4. **Results** — open any run directory, filter the candidates, scatter plot, pick one.
+4. **Results** — open any run directory (also the shipped examples), sort by any column, filter
+                 (atoms, twists, residual, strain), scatter plot, pick one.
 5. **Viewer**  — 3D view (py3Dmol): colour by layer or element, show/hide layers, cell,
                  2x2 / 3x3 repeat, top / side view; lineage, layer table and sanity checks.
 6. **Export**  — VASP / LAMMPS with interlayer gap, vacuum, lateral shifts, Poisson ratios;
@@ -181,18 +182,91 @@ def plan_table(job: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+#: Columns the Results tab can sort by: (label, index column).
+SORT_COLUMNS = [("atoms", "n_atoms"), ("cell area", "cell_area"), ("max layer residual", "max_layer_residual"),
+                ("residual", "residual"), ("max strain", "max_strain"), ("strain energy", "strain_energy"),
+                ("last twist", "twist"), ("twists (layer 1→2 first)", "twists"), ("id", "id")]
+
+#: Old indexes (before ``n_atoms`` / ``twists``) are completed from the recipes up to this many rows.
+FILL_LIMIT = 5000
+
+
+def _fill_missing_columns(run_dir: Path, table: pd.DataFrame) -> pd.DataFrame:
+    """``n_atoms`` / ``twists`` for rows of an index written before those columns existed."""
+    missing = table["n_atoms"].isna() | ((table["twists"] == "") & (table["n_layers"] > 1))
+    if not missing.any() or missing.sum() > FILL_LIMIT:
+        return table
+    table = table.copy()
+    search_dirs = default_search_dirs(run_dir)
+    for index in table.index[missing]:
+        record = get(run_dir, table.at[index, "id"])
+        table.at[index, "twists"] = ";".join(f"{twist:.6f}" for twist in record.interface_twists)
+        try:
+            table.at[index, "n_atoms"] = sum(record.atom_counts(search_dirs))
+        except FileNotFoundError:
+            pass
+    return table
+
+
+def parse_twists(text: str) -> list[float]:
+    """Numbers in a free-text twist filter: ``"21.79, 6.01"`` -> [21.79, 6.01]."""
+    return [float(part) for part in text.replace(",", " ").replace(";", " ").split()]
+
+
+def twists_include(stored: str, wanted: Sequence[float], tol: float = 0.01) -> bool:
+    """True if every twist in ``wanted`` is one of the interface twists in ``stored`` (within ``tol`` deg)."""
+    twists = [float(part) for part in stored.split(";") if part]
+    return all(any(abs(twist - target) <= tol for twist in twists) for target in wanted)
+
+
+#: Rows listed in the Results tab (the table itself, ``app.results``, holds all).
+DISPLAY_LIMIT = 2000
+
+_CANDIDATE_COLUMNS = "{:>8}  {:>10}  {:<32}  {:>10}  {:>8}  {}"
+
+
+def candidate_header() -> str:
+    return _CANDIDATE_COLUMNS.format("atoms", "area (Å²)", "twists, layer 1→2 first (°)", "layer res", "strain %",
+                                     "id")
+
+
+def candidate_label(row: Any) -> str:
+    """One aligned line of the Results list (non-breaking spaces: browsers collapse normal ones)."""
+    atoms = "?" if pd.isna(row.n_atoms) else f"{int(row.n_atoms)}"
+    twists = " ".join(f"{float(t):.3f}" for t in str(row.twists).split(";") if t) or "-"
+    residual = "-" if pd.isna(row.max_layer_residual) else f"{row.max_layer_residual:.1e}"
+    strain = "-" if pd.isna(row.max_strain) else f"{row.max_strain:.3f}"
+    text = _CANDIDATE_COLUMNS.format(atoms, f"{row.cell_area:.1f}", twists, residual, strain, row.id)
+    return text.replace(" ", "\u00a0")
+
+
 def results_table(run_dir: Path, n_layers: Optional[int] = None, passed_only: bool = True,
                   max_residual: Optional[float] = None, max_layer_residual: Optional[float] = None,
-                  max_strain: Optional[float] = None) -> pd.DataFrame:
-    """Candidates of a run (default: the full stack), smallest cell first."""
+                  max_strain: Optional[float] = None, max_atoms: Optional[int] = None,
+                  twists: Sequence[float] = (), sort_by: str = "n_atoms", descending: bool = False) -> pd.DataFrame:
+    """Candidates of a run (default: the full stack), sorted by ``sort_by`` (default: fewest atoms first).
+
+    ``twists``: keep stacks that have all these interface twists (deg, ±0.01), e.g. ``[21.79, 6.01]``.
+    Ties are broken by cell area, then max layer residual, then id; empty values sort last.
+    """
     table = load_index(run_dir)
     if n_layers is None:
         n_layers = int(table["n_layers"].max())
     hits = find(run_dir, n_layers=n_layers, passed_filter=True if passed_only else None,
                 max_residual=max_residual, max_layer_residual=max_layer_residual, max_strain=max_strain)
-    columns = ["id", "twist", "residual", "max_layer_residual", "max_strain", "strain_energy",
+    hits = _fill_missing_columns(Path(run_dir), hits)
+    if max_atoms is not None:
+        hits = hits[hits["n_atoms"] <= max_atoms]
+    if twists:
+        hits = hits[hits["twists"].apply(lambda stored: twists_include(stored, twists))]
+    if sort_by not in {column for _, column in SORT_COLUMNS}:
+        raise ValueError(f"sort_by must be one of {[column for _, column in SORT_COLUMNS]}, got {sort_by!r}")
+    keys = [sort_by] + [key for key in ("cell_area", "max_layer_residual", "id") if key != sort_by]
+    hits = hits.sort_values(keys, ascending=[not descending] + [True] * (len(keys) - 1),
+                            na_position="last", kind="stable")
+    columns = ["id", "n_atoms", "twists", "twist", "residual", "max_layer_residual", "max_strain", "strain_energy",
                "cell_area", "passed_filter"]
-    return hits.sort_values(["cell_area", "max_layer_residual"])[columns].reset_index(drop=True)
+    return hits[columns].reset_index(drop=True)
 
 
 def viewer_atoms(built: Any, visible_layers: Optional[Sequence[int]] = None, repeat: int = 1):
@@ -513,22 +587,44 @@ class MLMApp:
         wide = {"description_width": "150px"}
         self.filter_residual = w.FloatText(value=0.0, description="max layer residual (Å)", style=wide)
         self.filter_strain = w.FloatText(value=0.0, description="max strain (%)", style=wide)
+        self.filter_atoms = w.IntText(value=0, description="max atoms", style=wide)
+        self.filter_twists = w.Text(value="", description="has twists (°)", placeholder="e.g. 21.79, 6.01",
+                                    style=wide)
+        self.sort_by = w.Dropdown(options=SORT_COLUMNS, value="n_atoms", description="sort by")
+        self.descending = w.Checkbox(value=False, description="descending")
         apply = w.Button(description="Apply", icon="filter")
         apply.on_click(lambda _: self.show_results())
+        for control in (self.sort_by, self.descending, self.passed_only, self.n_layers_select):
+            control.observe(lambda change: self.show_results(), names="value")
         self.run_select.observe(lambda change: self._run_changed(), names="value")
-        self.candidates = w.Select(rows=10, layout=w.Layout(width="100%"))
+        self.candidates = w.Select(rows=14, layout=w.Layout(width="100%"))
         self.candidates.add_class("mlm-candidates")  # stable hook for scripted browser tests
         open_button = w.Button(description="View selected", icon="eye", button_style="primary")
         open_button.on_click(lambda _: self.select(self.candidates.value))
         self.results_summary = w.HTML()
+        self.results_header = w.HTML()
         self.results_plot = w.Image(format="png", layout=w.Layout(max_width="720px"))
+        monospace = w.HTML("<style>.mlm-candidates select, .mlm-results-header {font-family: monospace; "
+                           "font-size: 12px; white-space: pre}</style>")
         self.results_tab = w.VBox([
+            monospace,
             w.HBox([self.run_select, refresh, self.n_layers_select, self.passed_only]),
+            w.HBox([self.sort_by, self.descending]),
+            w.HBox([self.filter_atoms, self.filter_twists]),
             w.HBox([self.filter_residual, self.filter_strain, apply]),
-            self.results_summary, self.candidates, open_button, self.results_plot])
+            self.results_summary, self.results_header, self.candidates, open_button, self.results_plot])
+
+    def run_paths(self) -> dict[str, Path]:
+        """Runs the Results tab can open: ``runs_dir`` first, then the examples shipped with MLM."""
+        paths = {name: self.runs_dir / name for name in list_runs(self.runs_dir)}
+        examples = self.root / "examples" / "runs"
+        if examples.resolve() != self.runs_dir.resolve():
+            paths.update({f"examples/{name}": examples / name for name in list_runs(examples)})
+        return paths
 
     def refresh_runs(self, select: Optional[str] = None) -> None:
-        runs = list_runs(self.runs_dir)
+        self._run_paths = self.run_paths()
+        runs = list(self._run_paths)
         self.run_select.options = runs
         if select in runs:
             self.run_select.value = select
@@ -538,26 +634,42 @@ class MLMApp:
     def _run_changed(self) -> None:
         if not self.run_select.value:
             return
-        self.run_dir = self.runs_dir / self.run_select.value
+        self.run_dir = self._run_paths[self.run_select.value]
         layers = sorted(int(n) for n in load_index(self.run_dir)["n_layers"].unique())
-        self.n_layers_select.options = layers
-        self.n_layers_select.value = layers[-1]
+        self._quiet = True  # one refresh below, not one per changed control
+        try:
+            self.n_layers_select.options = layers
+            self.n_layers_select.value = layers[-1]
+        finally:
+            self._quiet = False
         self.show_results()
 
     def show_results(self) -> pd.DataFrame:
         """Fill the candidate list and the scatter plot for the chosen run and filters."""
-        if self.run_dir is None:
+        if self.run_dir is None or getattr(self, "_quiet", False):
+            return pd.DataFrame()
+        try:
+            twists = parse_twists(self.filter_twists.value)
+        except ValueError:
+            self.results_summary.value = "<p style='color:#c00'>⚠ twists: give numbers, e.g. 21.79, 6.01</p>"
             return pd.DataFrame()
         table = results_table(self.run_dir, self.n_layers_select.value, self.passed_only.value,
                               max_layer_residual=self.filter_residual.value or None,
-                              max_strain=self.filter_strain.value or None)
+                              max_strain=self.filter_strain.value or None,
+                              max_atoms=self.filter_atoms.value or None, twists=twists,
+                              sort_by=self.sort_by.value, descending=self.descending.value)
         self.results = table
-        self.candidates.options = [
-            (f"{row.id}   twist {row.twist:8.3f}°   area {row.cell_area:9.1f} Å²   "
-             f"layer res {row.max_layer_residual:.1e} Å   strain {row.max_strain:.3f} %", row.id)
-            for row in table.itertuples()]
-        location = html.escape(str(self.run_dir))
-        self.results_summary.value = f"<b>{len(table)}</b> candidate(s) in <code>{location}</code>"
+        shown = table.head(DISPLAY_LIMIT)
+        self.results_header.value = f"<div class='mlm-results-header'>{html.escape(candidate_header())}</div>"
+        self.candidates.options = [(candidate_label(row), row.id) for row in shown.itertuples()]
+        try:
+            location = html.escape(str(self.run_dir.resolve().relative_to(self.root.resolve())))
+        except ValueError:  # a run outside the repository
+            location = html.escape(str(self.run_dir))
+        more = ""
+        if len(table) > DISPLAY_LIMIT:
+            more = f" (first {DISPLAY_LIMIT} listed; narrow the filters to see others)"
+        self.results_summary.value = f"<b>{len(table)}</b> candidate(s) in <code>{location}</code>{more}"
         self._plot_results(table)
         return table
 

@@ -478,6 +478,28 @@ class MoireStructure:
         return max(float(np.max(np.abs(np.linalg.eigvalsh(np.asarray(t))))) for t in self.layer_strains)
 
     @property
+    def interface_twists(self) -> list[float]:
+        """Twist of every interface in stacking order (deg): layer 1→2, 2→3, ...
+
+        ``twist_sequence`` (and the id) list the same twists in the order the tournament
+        joined the blocks, e.g. interfaces 1, 3, 2, 4 for five layers.
+        """
+        return [float(upper - lower) for lower, upper in zip(self.layer_rotations, self.layer_rotations[1:])]
+
+    def atom_counts(self, search_dirs: Sequence[PathLike] = ()) -> list[int]:
+        """Atoms each layer contributes to the cell (primitive cells in the cell x atoms per cell).
+
+        Strained layers are counted with their strained primitive area. Raises
+        ``FileNotFoundError`` if a layer's POSCAR cannot be found.
+        """
+        counts = []
+        for poscar, strain in zip(self.source_poscar, self.strain_tensors()):
+            primitive = read_primitive(poscar, search_dirs)
+            area = abs(np.linalg.det(primitive["in_plane"])) * abs(np.linalg.det(np.eye(2) + strain))
+            counts.append(int(round(self.cell_area / area)) * len(primitive["coords"]))
+        return counts
+
+    @property
     def worst_layer_residual(self) -> Optional[float]:
         """max(layer_residuals): the real commensurability error of this cell, in Å."""
         if self.layer_residuals is None:

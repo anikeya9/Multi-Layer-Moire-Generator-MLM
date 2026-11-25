@@ -111,3 +111,52 @@ def test_stop_button_stops_a_background_run(tmp_path):
     from MLM.runinfo import load_run_info
 
     assert load_run_info(tmp_path / "stopper")["status"] == "stopped"
+
+
+GRAPHENE_RUN = REPO_ROOT / "examples" / "runs" / "graphene_5layer"
+
+
+def test_results_sorting_and_filters():
+    """The shipped 5-layer graphene run: sort by any column, filter by atoms and twists."""
+    table = results_table(GRAPHENE_RUN)
+    assert len(table) == 382 and table["n_atoms"].is_monotonic_increasing and table["n_atoms"].iloc[0] == 70
+    by_residual = results_table(GRAPHENE_RUN, sort_by="max_layer_residual", descending=True)
+    assert by_residual["max_layer_residual"].is_monotonic_decreasing
+    small = results_table(GRAPHENE_RUN, max_atoms=500)
+    assert len(small) > 0 and small["n_atoms"].max() <= 500
+    with_twists = results_table(GRAPHENE_RUN, twists=[10.42, 6.01])
+    assert len(with_twists) > 0 and all("10.417" in t and "6.008" in t for t in with_twists["twists"])
+    with pytest.raises(ValueError):
+        results_table(GRAPHENE_RUN, sort_by="colour")
+
+
+def test_results_tab_lists_shipped_examples_and_sorts(tmp_path):
+    app = MLMApp(root=REPO_ROOT, runs_dir=tmp_path)  # no runs of its own
+    assert "examples/graphene_5layer" in app.run_select.options
+    app.run_select.value = "examples/graphene_5layer"
+    assert len(app.candidates.options) == 382 and "atoms" in app.results_header.value
+    app.sort_by.value = "cell_area"
+    app.descending.value = True  # every control change refreshes the list
+    assert app.results["cell_area"].is_monotonic_decreasing
+    app.filter_twists.value = "not a number"
+    app.show_results()
+    assert "⚠" in app.results_summary.value
+    app.filter_twists.value = ""
+    app.filter_atoms.value = 100
+    assert len(app.show_results()) == 2  # the two 70-atom stacks
+    record = app.select(app.candidates.options[0][1])
+    assert record is not None and record.n_layers == 5
+
+
+def test_old_index_without_new_columns_is_completed(tmp_path):
+    import shutil
+
+    from MLM.index import INDEX_COLUMNS, load_index
+
+    run = tmp_path / "old"
+    shutil.copytree(REPO_ROOT / "examples" / "runs" / "bto_trilayer_demo", run)
+    table = load_index(run).drop(columns=["twists", "n_atoms"])
+    table.to_csv(run / "index.csv", index=False)  # as written before these columns existed
+    assert list(load_index(run).columns) == list(INDEX_COLUMNS)
+    filled = results_table(run, passed_only=False)
+    assert filled.set_index("id").at["bto_3_22.62_36.87_015688", "n_atoms"] == 1365

@@ -27,7 +27,7 @@ from MLM.index import find, get, lineage
 from MLM.spec import run_stack_spec
 
 #: Columns printed by ``find`` (the full table is in index.csv).
-FIND_COLUMNS = ["id", "n_layers", "twist", "angle_between_vectors", "residual",
+FIND_COLUMNS = ["id", "n_layers", "n_atoms", "twists", "angle_between_vectors", "residual",
                 "cumulative_residual", "max_layer_residual", "max_strain", "cell_area", "passed_filter"]
 
 
@@ -48,7 +48,9 @@ def _cmd_find(args: argparse.Namespace) -> int:
     passed = {None: None, "yes": True, "no": False}[args.passed]
     table = find(args.run_dir, n_layers=args.n_layers, max_cumulative_residual=args.max_cumulative_residual,
                  angle_between_vectors=args.angle, material=material, passed_filter=passed,
-                 max_cell_area=args.max_cell_area, max_strain=args.max_strain)
+                 max_cell_area=args.max_cell_area, max_strain=args.max_strain, max_atoms=args.max_atoms)
+    if args.sort:
+        table = table.sort_values(args.sort, ascending=not args.descending, na_position="last", kind="stable")
     with pd.option_context("display.max_rows", args.limit, "display.width", 200, "display.max_columns", 20):
         print(table[FIND_COLUMNS].head(args.limit).to_string(index=False))
     print(f"\n{len(table)} matching structure(s)")
@@ -115,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--material", help="'bto' = only bto; 'pto,sto' = exact stacking order")
     query.add_argument("--passed", choices=["yes", "no"], help="only candidates that passed / failed the filters")
     query.add_argument("--max-cell-area", type=float)
+    query.add_argument("--max-atoms", type=int, help="atoms in the cell")
+    query.add_argument("--sort", choices=["n_atoms", "cell_area", "residual", "cumulative_residual",
+                                          "max_layer_residual", "max_strain", "twist", "id"],
+                       help="sort by this column (default: cumulative_residual)")
+    query.add_argument("--descending", action="store_true", help="with --sort: largest first")
     query.add_argument("--max-strain", type=float, help="largest principal strain of any layer, in percent")
     query.add_argument("--limit", type=int, default=50, help="max rows to print (default 50)")
     query.set_defaults(handler=_cmd_find)

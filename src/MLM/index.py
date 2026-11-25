@@ -39,7 +39,9 @@ YAML_DIRNAME = "yamls"
 SPEC_FILENAME = "stack_spec.yaml"
 
 #: Columns of ``index.csv``, in order. Lists are stored as joined strings
-#: (``material`` with "," and ``parents`` with ";") so that every cell is a scalar.
+#: (``material`` with ",", ``parents`` and ``twists`` with ";") so that every cell is a scalar.
+#: ``twists`` are the interface twists in stacking order (layer 1→2, 2→3, ...); ``twist`` is
+#: the twist of the last search only. ``n_atoms`` is empty if a layer's POSCAR was not found.
 INDEX_COLUMNS: tuple[str, ...] = (
     "id",
     "level",
@@ -47,6 +49,7 @@ INDEX_COLUMNS: tuple[str, ...] = (
     "material",
     "parents",
     "twist",
+    "twists",
     "angle_between_vectors",
     "residual",
     "cumulative_residual",
@@ -54,6 +57,7 @@ INDEX_COLUMNS: tuple[str, ...] = (
     "max_strain",
     "strain_energy",
     "cell_area",
+    "n_atoms",
     "a1_length",
     "a2_length",
     "units",
@@ -66,8 +70,19 @@ INDEX_COLUMNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Writing
 # ---------------------------------------------------------------------------
-def index_row(record: MoireStructure, round_number: int, passed_filter: bool, path: str) -> dict:
-    """One ``index.csv`` row for ``record`` (``path`` relative to the run directory)."""
+def _n_atoms(record: MoireStructure, search_dirs: Sequence[PathLike]) -> Optional[int]:
+    try:
+        return sum(record.atom_counts(search_dirs))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def index_row(record: MoireStructure, round_number: int, passed_filter: bool, path: str,
+              search_dirs: Sequence[PathLike] = ()) -> dict:
+    """One ``index.csv`` row for ``record`` (``path`` relative to the run directory).
+
+    ``search_dirs``: where relative POSCAR paths are looked for (for ``n_atoms``).
+    """
     a1, a2 = record.lattice_vectors
     return {
         "id": record.id,
@@ -76,6 +91,7 @@ def index_row(record: MoireStructure, round_number: int, passed_filter: bool, pa
         "material": ",".join(record.material),
         "parents": ";".join(record.parents),
         "twist": record.twist,
+        "twists": ";".join(f"{twist:.6f}" for twist in record.interface_twists),
         "angle_between_vectors": record.angle_between_vectors,
         "residual": record.residual,
         "cumulative_residual": record.cumulative_residual,
@@ -83,6 +99,7 @@ def index_row(record: MoireStructure, round_number: int, passed_filter: bool, pa
         "max_strain": record.max_strain,
         "strain_energy": record.strain_energy,
         "cell_area": record.cell_area,
+        "n_atoms": _n_atoms(record, search_dirs),
         "a1_length": float((a1 @ a1) ** 0.5),
         "a2_length": float((a2 @ a2) ** 0.5),
         "units": record.units,
@@ -123,8 +140,13 @@ class RunStore:
         path = record.to_yaml(self.run_dir / YAML_DIRNAME)
         if record.id not in self.rows:
             relative = path.relative_to(self.run_dir).as_posix()
-            self.rows[record.id] = index_row(record, round_number, passed_filter, relative)
+            self.rows[record.id] = index_row(record, round_number, passed_filter, relative, self._search_dirs())
         return path
+
+    def _search_dirs(self) -> list[Path]:
+        """The run directory and its ancestors (recipes store paths relative to the repository)."""
+        run_dir = self.run_dir.resolve()
+        return [run_dir, *run_dir.parents]
 
     def load_existing(self) -> None:
         """Start from the rows of an existing index (used when resuming a run)."""
@@ -150,6 +172,7 @@ def write_index(run_dir: PathLike, rows: Sequence[dict], index_format: str = "cs
     loading the whole table, and the most-used columns are indexed.
     """
     table = pd.DataFrame(list(rows), columns=list(INDEX_COLUMNS))
+    table["n_atoms"] = pd.to_numeric(table["n_atoms"]).astype("Int64")  # whole numbers, empty if unknown
     table = table.sort_values(["round", "level", "twist", "id"], na_position="first", kind="stable")
     if index_format == "csv":
         path = Path(run_dir) / INDEX_FILENAME
@@ -182,6 +205,12 @@ def _normalise(table: pd.DataFrame) -> pd.DataFrame:
         table.insert(INDEX_COLUMNS.index("max_strain"), "max_strain", 0.0)
     if "strain_energy" not in table.columns:  # index written before elastic constants
         table.insert(INDEX_COLUMNS.index("strain_energy"), "strain_energy", float("nan"))
+    if "twists" not in table.columns:  # index written before twists / n_atoms (rebuild_index adds them)
+        table.insert(INDEX_COLUMNS.index("twists"), "twists", "")
+    if "n_atoms" not in table.columns:
+        table.insert(INDEX_COLUMNS.index("n_atoms"), "n_atoms", float("nan"))
+    table["twists"] = table["twists"].fillna("").astype(str)
+    table["n_atoms"] = pd.to_numeric(table["n_atoms"]).astype("Int64")
     return table
 
 
@@ -207,7 +236,8 @@ def rebuild_index(run_dir: PathLike, passed_filter: bool = True) -> Path:
             depth_cache[record_id] = 0 if record.is_root else 1 + max(depth(p) for p in record.parents)
         return depth_cache[record_id]
 
-    rows = [index_row(record, depth(rid), passed_filter, rel) for rid, (record, rel) in records.items()]
+    search_dirs = [run_dir.resolve(), *run_dir.resolve().parents]
+    rows = [index_row(record, depth(rid), passed_filter, rel, search_dirs) for rid, (record, rel) in records.items()]
     return write_index(run_dir, rows)
 
 
@@ -228,7 +258,7 @@ def load_index(run_dir: PathLike) -> pd.DataFrame:
             table = pd.read_sql(f"SELECT * FROM {SQLITE_TABLE}", connection)
         connection.close()
     else:
-        table = pd.read_csv(path, keep_default_na=True)
+        table = pd.read_csv(path, keep_default_na=True, dtype={"twists": str})
     return _normalise(table)
 
 
@@ -250,6 +280,7 @@ def find(
     max_residual: Optional[float] = None,
     max_layer_residual: Optional[float] = None,
     max_cell_area: Optional[float] = None,
+    max_atoms: Optional[int] = None,
     twist_range: Optional[tuple[float, float]] = None,
     max_strain: Optional[float] = None,
     max_strain_energy: Optional[float] = None,
@@ -261,6 +292,7 @@ def find(
       ``["pto", "sto"]`` must match the stacking order exactly.
     - ``angle_between_vectors`` matches within ``angle_tol`` degrees.
     - ``twist_range=(lo, hi)`` keeps rows with ``lo <= twist <= hi``.
+    - ``max_atoms``: atoms in the cell (rows of old indexes without ``n_atoms`` are dropped).
     - ``max_strain`` (percent): largest absolute principal strain of any layer.
     - ``max_strain_energy`` (meV/Å²): rows without a known energy are dropped.
 
@@ -286,6 +318,7 @@ def find(
     at_most("residual", max_residual)
     at_most("max_layer_residual", max_layer_residual)
     at_most("cell_area", max_cell_area)
+    at_most("n_atoms", max_atoms)
     at_most("max_strain", max_strain)
     at_most("strain_energy", max_strain_energy)
     if angle_between_vectors is not None:
@@ -303,11 +336,14 @@ def find(
         # Large runs: let SQLite filter, so the whole table never has to be loaded.
         where = " AND ".join(sql for sql, _, _ in conditions) or "1"
         parameters = tuple(value for _, values, _ in conditions for value in values)
-        with sqlite3.connect(path) as connection:
-            result = pd.read_sql(f"SELECT * FROM {SQLITE_TABLE} WHERE {where}", connection, params=parameters)
-        connection.close()
-        result = _normalise(result)
-    else:
+        try:
+            with sqlite3.connect(path) as connection:
+                result = pd.read_sql(f"SELECT * FROM {SQLITE_TABLE} WHERE {where}", connection, params=parameters)
+            connection.close()
+            result = _normalise(result)
+        except pd.errors.DatabaseError:  # an old index without a filtered column (n_atoms)
+            path = None
+    if path is None or path.name != SQLITE_FILENAME:
         table = load_index(run_dir)
         keep = pd.Series(True, index=table.index)
         for _, _, mask in conditions:

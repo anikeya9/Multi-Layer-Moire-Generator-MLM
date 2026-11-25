@@ -49,6 +49,10 @@ def test_find_filters(small_run):
     assert len(find(run_dir, angle_between_vectors=90.0)) == len(load_index(run_dir))
     tight = find(run_dir, max_cumulative_residual=1e-4)
     assert (tight["cumulative_residual"] <= 1e-4).all()
+    table = load_index(run_dir)
+    assert table["n_atoms"].notna().all() and (table.loc[table["n_layers"] == 1, "n_atoms"] == 7).all()
+    small = find(run_dir, max_atoms=int(table["n_atoms"].min()))
+    assert set(small["n_atoms"]) == {table["n_atoms"].min()}
 
 
 def test_get_and_lineage(small_run):
