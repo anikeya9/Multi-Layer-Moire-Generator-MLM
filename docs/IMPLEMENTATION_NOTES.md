@@ -464,11 +464,28 @@ mlm check runs/bto_trilayer_demo bto_3_22.62_36.87_015688
 checks passed: 1365 atoms, composition Ba390O780Ti195
   min_distance: 1.8418 Å
   min_interlayer_distance: 5.9754 Å
+  seam_max_error: 0.0002 Å
   space_group: P2 (3)
 ```
 (The 6 Å between layers comes from the notebooks' stacking rule: 3 Å above the top atom,
 plus the ~3 Å at which each POSCAR layer starts above z = 0.) Tests make each check fail
 on purpose: layers pushed together, atoms removed.
+
+**PBC seam check** (replaces opening the file in OVITO, drawing bonds and looking for broken
+ones at the box edge). Every layer of a correct cell is a rotated (and possibly strained)
+supercell of its primitive layer, so under periodic boundary conditions every atom must have
+exactly the neighbours (species and distances, up to 4.5 Å within its layer) of some atom of
+the primitive layer, built with the same strain and Poisson thickness change. An atom moved
+or doubled at the boundary, or a cell vector that is slightly too long, gives atoms whose
+neighbour list matches no primitive atom; `seam_max_error` is the largest mismatch (Å) and
+`seam_bad_atoms` per layer counts atoms off by more than 0.01 Å. Works for heterostructures,
+strained layers and any number of layers. The neighbour list is a periodic KD-tree (scipy),
+identical to ASE's `neighbor_list` (test) but O(N) in memory. `write_structure` and
+`mlm write` run all checks except the space group (spglib takes minutes on large cells).
+
+**Writer speed.** Layers are now cropped to the cell (plus a margin) before the fractional
+folding, and the replication is vectorised: a 145 000-atom LAMMPS file is written in 3 s and
+0.46 GB instead of 852 s and 5.6 GB (same file for exactly commensurate cells).
 
 ### 9.5 Inputs, storage, tooling
 
@@ -481,7 +498,56 @@ on purpose: layers pushed together, atoms removed.
   (CSV), full load 0.62 s vs 0.25 s — useful mainly when a table is too large to load.
 - **Tooling**: `ruff check .`, `mypy`, `pre-commit run -a`, `.github/workflows/tests.yml`.
 
-### 9.6 What went wrong on the way (fixed)
+### 9.6 Five-layer twisted graphene: every stack, and finding it again
+
+**Index columns.** `index.csv` (and the SQLite index) gained `twists` — the interface twists
+in stacking order, layer 1→2 first, joined with ";" — and `n_atoms`. The id and
+`twist_sequence` list the twists in the order the tournament joined the blocks (for five
+layers: interfaces 1, 3, 2, 4), which is easy to misread. `find(..., max_atoms=)`,
+`mlm find --max-atoms N --sort n_atoms`. Indexes written before are read with empty columns
+(the GUI fills them from the recipes; `rebuild_index` recomputes them).
+
+**Results tab.** Sort by any column (atoms, cell area, residuals, strain, twists, id;
+ascending or descending), filter by maximum atoms and by twists the stack must contain
+(`21.79, 6.01`, ±0.01°), as well as residual and strain. The list shows atoms, area, the
+twists bottom to top, residual and strain in aligned columns; the shipped example runs
+(`examples/runs/*`) appear next to your own runs.
+
+**The search** (`dev/graphene_5layer_deep_search.py`, a prototype on top of `build_stack`):
+
+- every interface may take any twist in 0.5–59.5° (graphene repeats every 60°);
+- an **atom budget** bounds the final cell; the final cell is a supercell of every block
+  below it, so the same bound holds in every round and prunes all of them;
+- **exact twists**: every interface joins two graphene layers, so its twist must be a bilayer
+  commensurate twist, cos θ = (n²+4nm+m²)/(2S), sin θ = √3(n²−m²)/(2S), S = n²+nm+m² (coprime
+  m < n; the cell holds S or S/3 primitive cells). Searches test exactly these angles instead
+  of a 0.0005° grid: the same 3612 stacks at 5000 atoms (one-to-one, twists within 0.002°),
+  about 65× less CPU, residuals ~1e-10 Å instead of ~4e-4 Å;
+- **adaptive n shells**: n grows in shells (round 1 from 10, round 2 from 20, round 3 from
+  30, +10 each) without rescanning, until the smallest cell found is provably the smallest
+  (n·h > L) or the budget is reached. With the shells the cells are the same as with one
+  fixed box (tested).
+
+| atom budget | bilayer twists | 5-layer stacks | distinct (flip/mirror) | time (18 processes) | peak memory |
+|---|---|---|---|---|---|
+| 1 000 | 28 | 382 | 111 | 25 s (4 processes) | — |
+| 10 000 | 274 | 14 182 | 3 891 | 58 s | 0.4 GB |
+| 20 000 | 554 | 50 222 | 13 908 | 4 min | 0.9 GB |
+| 40 000 | 1 098 | 138 182 | 39 178 | 15 min | 2.7 GB |
+| 80 000 | 2 206 | 359 666 | 105 292 | 1.4 h | 10.2 GB |
+
+Time, memory and disk grow ~4× per doubling of the budget; 1 million atoms would need about
+1.7 TB of memory as written (every candidate is held in memory) — streaming candidates to the
+SQLite index would be the next step. The count of bilayer twists agrees with the closed form
+at every budget (round 1 is complete).
+
+**Shipped result**: `examples/runs/graphene_5layer` is the complete 1000-atom run (382
+stacks, all levels, CSV index) with VASP files of the 111 distinct stacks (3.35 Å between
+sheets) in `structures/`. Every file passes all checks (seam error < 1e-9 Å). 53 of the 111
+have four different interface twists (smallest 490 atoms: 16.426°, 43.574°, 38.213°,
+21.787°); counting θ and 60°−θ (mirror images) as the same, four stacks remain, all 910 atoms.
+
+### 9.7 What went wrong on the way (fixed)
 
 - The first pre-commit configuration ran `ruff --fix` on file names passed explicitly,
   which bypasses ruff's exclude list: it rewrote `match.py` and three legacy modules, and

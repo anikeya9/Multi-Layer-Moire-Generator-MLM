@@ -1,0 +1,39 @@
+status: finished
+mlm_version: 0.2.0
+git_commit: 98240f5c3f41e86650083ebb5cb87284fb5f8b0f
+git_dirty: true
+python: 3.13.18
+numpy: 2.5.5
+ase: 3.29.0
+platform: Linux x86_64
+started_at: '2026-11-25T17:02:32+00:00'
+finished_at: '2026-11-25T17:02:40+00:00'
+wall_seconds: 8.17
+steps:
+- round: 1
+  step: L1 + L2 -> L1-2
+  searches: 1
+  found: 28
+  passed: 28
+  seconds: 0.228
+- round: 1
+  step: L3 + L4 -> L3-4
+  searches: 1
+  found: 28
+  passed: 28
+  seconds: 0.219
+- round: 2
+  step: L1-2 + L3-4 -> L1-4
+  searches: 784
+  found: 142
+  passed: 142
+  seconds: 3.298
+- round: 3
+  step: L1-4 + L5 -> L1-5
+  searches: 142
+  found: 382
+  passed: 382
+  seconds: 4.322
+workers: 4
+resumed: false
+final_candidates: 382

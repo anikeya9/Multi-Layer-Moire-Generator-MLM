@@ -1,0 +1,46 @@
+name: graphene_5layer
+output_dir: examples/runs/graphene_5layer
+layers:
+- poscar: moire_structures/graphene/graphene_monolayer.vasp
+  material: graphene
+- poscar: moire_structures/graphene/graphene_monolayer.vasp
+  material: graphene
+- poscar: moire_structures/graphene/graphene_monolayer.vasp
+  material: graphene
+- poscar: moire_structures/graphene/graphene_monolayer.vasp
+  material: graphene
+- poscar: moire_structures/graphene/graphene_monolayer.vasp
+  material: graphene
+search:
+  default:
+    degmin: 0.5
+    degmax: 59.5
+    degstep: 0.001
+    dtol: 1.0e-06
+    nmin: -1000
+    nmax: 1000
+    goodangles:
+    - 60.0
+    dedupe: true
+    keep_supercells: false
+    angle_cluster_tol: null
+    strain_mode: isotropic
+    strain_residual_tol: 1.0e-06
+    scanner: fast
+    merge_equivalent_twists: none
+    include_axes: true
+    max_matches_per_angle: auto
+  rounds:
+    2:
+      nmin: -20
+      nmax: 20
+    3:
+      nmin: -30
+      nmax: 30
+  interfaces: {}
+filters:
+  max_residual: 0.001
+  max_cumulative_residual: null
+  max_layer_residual: 0.001
+  max_length_mismatch: null
+  max_strain_energy: null

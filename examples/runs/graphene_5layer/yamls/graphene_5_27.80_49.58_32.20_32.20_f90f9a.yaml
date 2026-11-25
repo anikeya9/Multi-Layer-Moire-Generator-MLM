@@ -1,0 +1,40 @@
+id: graphene_5_27.80_49.58_32.20_32.20_f90f9a
+level: 4
+n_layers: 5
+material: [graphene, graphene, graphene, graphene, graphene]
+parents: [graphene_4_27.80_49.58_32.20_55cd37, graphene_1_5977bc]
+twist: 32.204227504
+lattice_vectors:
+- [-9.8691650464, 21.367369111]
+- [-23.4392669852, 2.1367369111000016]
+angle_between_vectors: 60.00000000014821
+residual: 1.7169154471961047e-10
+cumulative_residual: 2.4224998312121537e-10
+source_poscar: [moire_structures/graphene/graphene_monolayer.vasp, moire_structures/graphene/graphene_monolayer.vasp,
+  moire_structures/graphene/graphene_monolayer.vasp, moire_structures/graphene/graphene_monolayer.vasp,
+  moire_structures/graphene/graphene_monolayer.vasp]
+units: angstrom
+twist_sequence: [27.795772496, 49.582561794, 32.204227504, 32.204227504]
+layer_rotations: [0.0, 27.795772496, 60.0, 109.582561794, 141.786789298]
+layer_residuals: [3.552713678800501e-15, 1.0707807502265755e-10, 1.8165556605758096e-10,
+  1.7234298882092763e-10, 1.7169154471961047e-10]
+coefficients:
+  lower:
+  - [1, 0]
+  - [0, 1]
+  upper:
+  - [11, 6]
+  - [5, 11]
+layer_strains:
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+- - [0.0, 0.0]
+  - [0.0, 0.0]
+strain_energy: null
+schema_version: 3

@@ -1,0 +1,18 @@
+{
+ "adaptive": {
+  "max_atoms": 1000,
+  "max_area": 527.1952309095205,
+  "n_step": 10,
+  "n_limit": 200,
+  "log": "examples/runs/graphene_5layer/shells.tsv",
+  "twists_file": "examples/runs/graphene_5layer/twists.json"
+ },
+ "search": {
+  "grid": false,
+  "degmin": 0.5,
+  "degmax": 59.5,
+  "degstep": 0.001,
+  "round1_start": 1000,
+  "max_residual": 0.001
+ }
+}

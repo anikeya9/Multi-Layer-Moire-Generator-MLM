@@ -74,6 +74,9 @@ pip install -e ".[all]"
 ```
 Then open `notebooks/feature_tour.ipynb` (every feature, with short explanations; runs in ~2 minutes), `notebooks/moire_stack_explorer.ipynb` (your own stack in one input cell), or the GUI below. Step-by-step tutorial for the `with-straining` and `quality-improvements` branches: `docs/TUTORIAL.md`.  
 
+**Highlight: every five-layer twisted graphene stack**  
+`examples/runs/graphene_5layer` contains all 382 five-layer graphene stacks with fewer than 1000 atoms (111 distinct), with any twist from 0.5° to 59.5° at each of the four interfaces, and VASP files of the 111 distinct ones (3.35 Å between sheets, every file checked for periodic-boundary seams). The same search, `dev/graphene_5layer_deep_search.py`, found all 359 666 stacks up to 80 000 atoms in 1.4 h on one workstation. Browse them in the GUI's Results tab (sort by atoms, filter by twists) or with `mlm find examples/runs/graphene_5layer --n-layers 5 --sort n_atoms`. Walkthrough: `docs/TUTORIAL.md` §B7.  
+
 **Graphical interface**  
 `mlm gui` opens the GUI in the browser (or run `notebooks/mlm_gui.ipynb` in Jupyter): stack the layers, set a twist range per interface, run, browse the results and look at any structure in 3D before exporting it to VASP/LAMMPS.  
 ![MLM GUI viewer](docs/images/gui_5_viewer.png)  

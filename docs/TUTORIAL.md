@@ -241,7 +241,13 @@ print(small[["id", "twist", "max_strain", "cell_area"]].sort_values("cell_area")
 ```
 
 `find` also takes `max_cumulative_residual`, `max_layer_residual`, `angle_between_vectors`,
-`material`, `twist_range` and `max_cell_area`.
+`material`, `twist_range` and `max_cell_area` (on `quality-improvements` also `max_atoms`).
+
+On `quality-improvements` the table has two more columns: `n_atoms`, and `twists` — the twist
+of every interface in stacking order, layer 1→2 first. Note that the **id lists the twists in
+the order the rounds joined the blocks**, not bottom to top: for five layers the id
+`graphene_5_16.43_38.21_43.57_21.79_…` means interfaces 1, 3, 2, 4, i.e. bottom to top
+16.43°, 43.57°, 38.21°, 21.79°. Use the `twists` column (or `record.interface_twists`).
 
 ### A6. Known limitations of `with-straining` (fixed in `quality-improvements`)
 
@@ -275,7 +281,11 @@ opens the GUI in your browser (it runs on your computer; stop it with Ctrl+C). I
 2. **Plan** — the dry run: which layers are joined in which round, and how long each search takes.
 3. **Run** — runs in the background with a progress bar; **Stop** at any time, tick
    *resume* and **Run** again to continue.
-4. **Results** — choose a run, filter, and pick a structure from the list.
+4. **Results** — choose a run (your own, or a shipped example such as
+   `examples/graphene_5layer`), **sort by any column** (atoms, cell area, residuals, strain,
+   twists, id; tick *descending* to reverse), **filter** by maximum atoms, by twists the stack
+   must contain (e.g. `21.79, 6.01`), by residual and strain, and pick a structure from the
+   list. Each line shows atoms, cell area, the twists bottom to top, residual and strain.
    ![Results tab](images/gui_4_results.png)
 5. **Viewer** — 3D view coloured by layer or element; hide layers, repeat 2×2 or 3×3, top or
    side view; below it the layer table, the sanity checks and the build history.
@@ -379,6 +389,51 @@ cif_layer = MoireStructure.from_poscar("my_layer.cif", "x")   # CIF works too
 
 Direct coordinates, scale factors and Selective Dynamics are all read correctly.
 
+### B7. Highlight: every five-layer twisted graphene stack
+
+`examples/runs/graphene_5layer` holds **every** 5-layer graphene stack with fewer than 1000
+atoms, with any twist from 0.5° to 59.5° at each of the four interfaces: 382 stacks, 111 of
+them distinct (a stack turned upside down, or mirrored, is the same structure). VASP files of
+the 111 are in `examples/runs/graphene_5layer/structures/`, with graphite's 3.35 Å between the
+sheets; every file passes the checks below, including the PBC seam check.
+
+Browse them in the GUI (**4 Results** → run `examples/graphene_5layer` → sort by *atoms*), or:
+
+```bash
+mlm find examples/runs/graphene_5layer --n-layers 5 --max-atoms 500 --sort n_atoms
+mlm write examples/runs/graphene_5layer <id> --fmt lammps --gap -2.5023
+```
+
+The gap is added *on top of* the height at which each POSCAR layer starts: this graphene
+POSCAR has its atoms 5.8523 Å above z = 0, so `--gap -2.5023` puts the sheets 3.35 Å apart
+(the default `--gap 3` gives 8.85 Å, `--gap 0` 5.85 Å). In Python:
+`gap = 3.35 - read_primitive(poscar)["coords"][:, 2].min()`.
+
+Larger budgets (the run behind these files; see `docs/IMPLEMENTATION_NOTES.md` §9.6):
+
+```bash
+python dev/graphene_5layer_deep_search.py --quick                       # 1000 atoms, ~20 s
+python dev/graphene_5layer_deep_search.py --max-atoms 80000 --round1-start 1000 \
+       --run-dir runs/graphene_5layer_80k --write-top 200                # 359 666 stacks, 1.4 h, 10 GB
+python dev/graphene_5layer_deep_search.py --run-dir runs/graphene_5layer_80k --write-below 1000
+```
+
+The script tests only the exact commensurate graphene twists (closed form) and grows the
+search range in shells; time and memory grow ~4× per doubling of the atom budget.
+
+### B8. Checks on every written structure
+
+`write_structure`, `mlm write` and the GUI export check each structure before writing:
+atom counts per layer, overlaps, the distance between layers, and the **PBC seam check** —
+every atom must have the same neighbours (under periodic boundary conditions) as an atom of
+its primitive layer, so a broken or doubled atom at the box edge, or a cell vector that is a
+little too long, is reported. This replaces looking for broken bonds at the boundary in
+OVITO, and works for strained layers and heterostructures too.
+
+```bash
+mlm check examples/runs/graphene_5layer graphene_5_21.79_21.79_38.21_38.21_cf1352 --gap -2.5023
+```
+
 ---
 
 ## 2. Moving between branches
@@ -416,14 +471,15 @@ After switching branch, reinstall (`pip install -e .` or `pip install -e ".[all]
 
 ```bash
 mlm run SPEC.yaml [--dry-run] [--workers N] [--resume] [--index-format sqlite]
-mlm find RUN_DIR [--n-layers N] [--passed yes] [--max-strain P] [--max-cell-area A] [--angle 90]
+mlm find RUN_DIR [--n-layers N] [--passed yes] [--max-strain P] [--max-cell-area A] [--max-atoms N]
+         [--angle 90] [--sort n_atoms|cell_area|max_layer_residual|... [--descending]]
 mlm show RUN_DIR ID
 mlm write RUN_DIR ID [--fmt vasp|lammps] [--gap 3] [--vacuum 50]
 mlm check RUN_DIR ID
 mlm gui [--port 8866]
 ```
 
-(`mlm check`, `mlm gui`, `--workers`, `--resume`, `--index-format` need `quality-improvements`;
+(`mlm check`, `mlm gui`, `--workers`, `--resume`, `--index-format`, `--max-atoms`, `--sort` need `quality-improvements`;
 on `with-straining` use `python -m MLM` instead of `mlm`.)
 
 | Python | Purpose |
