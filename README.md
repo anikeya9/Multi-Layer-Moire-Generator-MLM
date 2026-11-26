@@ -2,7 +2,7 @@
 **A Python package for building commensurate supercells of twisted multilayer 2D materials.**  
 Twisting two (or more) atomically thin layers relative to each other produces *moiré* superlattices — the physical substrate for some of the most exciting phenomena in modern condensed-matter physics (flat bands, unconventional superconductivity, correlated insulators, ferroelectric polarization textures). Before those systems can be simulated with DFT or MD, one has to find a  *commensurate* supercell: a finite box in which the twisted pattern closes back on itself under periodic boundary conditions.  
 MLM does that fast, for any Bravais lattice, and — unlike the existing bilayer-focused tools — for **three or more layers** with independent twist angles.  
-**Capstone project, University of Southern California (Mork Family Department of Chemical Engineering and Materials Science). Manuscript in preparation** *.*  
+**Paper:** A. Aditya and S. Mohanty, *MLM: Multi-Layer Moire — A Python Package for Generating Commensurate Supercells of Twisted Multilayer Two-Dimensional Materials*, [arXiv:2605.05393](https://arxiv.org/abs/2605.05393) (2026). Free and open source under the [MIT License](LICENSE); please cite the paper if MLM helps your work.  
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANUlEQVR4nO3OMQ2AABAAsSNBCUpfEJ5YGBDBgAU2QtIq6DIzW7UHAMBfHGt1V+fXEwAAXrseHDYF+yOk59sAAAAASUVORK5CYII=)  
 **Why it's interesting**  
 - **Algorithmic speedup.** The standard brute-force coincidence search is \mathcal{O}(N^4) in the search range N. MLM reformulates it as a *solve-and-round* problem: for each bottom-layer lattice vector \mathbf{v}, the matching top-layer indices \mathbf{m} are obtained by a single 2\times 2 linear solve B(\theta)\,\mathbf{m}=\mathbf{v}. That drops the scaling to \mathcal{O}(N^2) and gives 10²–10³× speedups at practical search ranges — enough that sub-1° twist angles (supercells with millions of atoms) become tractable on a single CPU core.  
@@ -71,5 +71,26 @@ Try it: `notebooks/moire_stack_explorer.ipynb` (list your layers and a twist ran
 **Skills demonstrated**  
 Scientific Python (NumPy / SciPy / Polars), JIT compilation (Numba), parallelism (multiprocessing), computational geometry and change-of-basis linear algebra, algorithm design (complexity reduction from N^4 \to N^2), computational materials science (DFT / MD input generation, VASP & LAMMPS I/O via ASE), and technical writing for peer-reviewed publication.  
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANklEQVR4nO3OQQmAABRAsSfYxZo/kC1sYQLPJrCCNxG2BFtmZquOAAD4i3Ot7mr/egIAwGvXA4qzBdC53Vr8AAAAAElFTkSuQmCC)  
+
+**Citing MLM**
+
+If you use MLM in research or teaching, please cite the paper. GitHub's **"Cite this repository"** button (from [`CITATION.cff`](CITATION.cff)) gives the same reference in APA and BibTeX.
+
+```bibtex
+@misc{aditya2026mlmmultilayermoire,
+      title={MLM: Multi-Layer Moire -- A Python Package for Generating Commensurate Supercells of Twisted Multilayer Two-Dimensional Materials},
+      author={Anikeya Aditya and Sampad Mohanty},
+      year={2026},
+      eprint={2605.05393},
+      archivePrefix={arXiv},
+      primaryClass={cond-mat.mtrl-sci},
+      url={https://arxiv.org/abs/2605.05393},
+}
+```
+
+**License**
+
+MLM is released under the [MIT License](LICENSE): you may use, modify and redistribute it, including in your own projects, as long as the copyright notice is kept.
+
 **Contact**  
 **Anikeya Aditya** — [anikeya9@gmail.com] 
