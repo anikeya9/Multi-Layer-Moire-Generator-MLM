@@ -1,4 +1,6 @@
 **MLM — Multi-Layer Moiré**  
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24570302.svg)](https://doi.org/10.5281/zenodo.24570302) [![arXiv](https://img.shields.io/badge/arXiv-2605.05393-b31b1b.svg)](https://arxiv.org/abs/2605.05393) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
 **A Python package for building commensurate supercells of twisted multilayer 2D materials.**  
 Twisting two (or more) atomically thin layers relative to each other produces *moiré* superlattices — the physical substrate for some of the most exciting phenomena in modern condensed-matter physics (flat bands, unconventional superconductivity, correlated insulators, ferroelectric polarization textures). Before those systems can be simulated with DFT or MD, one has to find a  *commensurate* supercell: a finite box in which the twisted pattern closes back on itself under periodic boundary conditions.  
 MLM does that fast, for any Bravais lattice, and — unlike the existing bilayer-focused tools — for **three or more layers** with independent twist angles.  
@@ -87,6 +89,8 @@ If you use MLM in research or teaching, please cite the paper. GitHub's **"Cite 
       url={https://arxiv.org/abs/2605.05393},
 }
 ```
+
+The code itself is archived on Zenodo: [doi:10.5281/zenodo.24570302](https://doi.org/10.5281/zenodo.24570302) (all versions; each release also has its own DOI).
 
 **License**
 
