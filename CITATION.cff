@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use MLM in your research or teaching, please cite the arXiv paper below."
+title: "MLM: Multi-Layer Moiré"
+abstract: >-
+  A Python package for generating commensurate supercells of twisted
+  multilayer two-dimensional materials.
+type: software
+authors:
+  - given-names: Anikeya
+    family-names: Aditya
+  - given-names: Sampad
+    family-names: Mohanty
+license: MIT
+repository-code: "https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM"
+keywords:
+  - moiré
+  - twisted multilayer
+  - commensurate supercell
+  - 2D materials
+  - graphene
+  - DFT
+  - molecular dynamics
+preferred-citation:
+  type: article
+  title: "MLM: Multi-Layer Moire -- A Python Package for Generating Commensurate Supercells of Twisted Multilayer Two-Dimensional Materials"
+  authors:
+    - given-names: Anikeya
+      family-names: Aditya
+    - given-names: Sampad
+      family-names: Mohanty
+  year: 2026
+  month: 5
+  journal: "arXiv preprint"
+  identifiers:
+    - type: other
+      value: "arXiv:2605.05393"
+  doi: "10.48550/arXiv.2605.05393"
+  url: "https://arxiv.org/abs/2605.05393"
