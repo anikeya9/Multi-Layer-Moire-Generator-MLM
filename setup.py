@@ -4,7 +4,7 @@ setup(
     name="MLM",
     version="0.2.0",
     description="Commensurate supercells of twisted multilayer 2D materials",
-    author="Anikeya Aditya",
+    author="Anikeya Aditya, Sampad Mohanty",
     license="MIT",
     url="https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM",
     packages=find_packages(where="src"),

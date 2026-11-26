@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use MLM in your research or teaching, please cite the paper below."
+message: "If you use MLM in your research or teaching, please cite the arXiv paper below."
 title: "MLM: Multi-Layer Moiré"
 abstract: >-
   A Python package for generating commensurate supercells of twisted
@@ -8,7 +8,8 @@ type: software
 authors:
   - given-names: Anikeya
     family-names: Aditya
-version: 0.2.0
+  - given-names: Sampad
+    family-names: Mohanty
 license: MIT
 repository-code: "https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM"
 keywords:
