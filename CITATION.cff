@@ -11,6 +11,7 @@ authors:
   - given-names: Sampad
     family-names: Mohanty
 license: MIT
+doi: 10.5281/zenodo.24570302
 repository-code: "https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM"
 keywords:
   - moiré
