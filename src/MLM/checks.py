@@ -79,7 +79,8 @@ def _with_ghosts(frac: np.ndarray, cell: np.ndarray, pbc: Sequence[bool], cutoff
     margin = cutoff * np.linalg.norm(faces, axis=1) / abs(np.linalg.det(cell))  # cutoff / face spacing
     periodic = np.asarray(pbc, dtype=bool)
     reach = [int(np.ceil(m)) if p else 0 for m, p in zip(margin, periodic)]
-    images, owners = [positions], [np.arange(len(frac))]  # the atoms themselves come first
+    images: list[np.ndarray] = [positions]  # the atoms themselves come first
+    owners: list[np.ndarray] = [np.arange(len(frac))]
     for shift in product(*(range(-n, n + 1) for n in reach)):
         if not any(shift):
             continue
