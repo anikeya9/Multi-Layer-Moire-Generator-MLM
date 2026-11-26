@@ -3,6 +3,10 @@ from setuptools import find_packages, setup
 setup(
     name="MLM",
     version="0.2.0",
+    description="Commensurate supercells of twisted multilayer 2D materials",
+    author="Anikeya Aditya",
+    license="MIT",
+    url="https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.9",

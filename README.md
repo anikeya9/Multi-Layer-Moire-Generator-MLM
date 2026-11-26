@@ -6,7 +6,7 @@ Twisting two (or more) atomically thin layers relative to each other produces *m
 
 MLM does that fast, for any Bravais lattice, and — unlike the existing bilayer-focused tools — for **three or more layers** with independent twist angles.
 
-**Capstone project, University of Southern California (Mork Family Department of Chemical Engineering and Materials Science). Manuscript in preparation.**
+**Paper:** A. Aditya and S. Mohanty, *MLM: Multi-Layer Moire — A Python Package for Generating Commensurate Supercells of Twisted Multilayer Two-Dimensional Materials*, [arXiv:2605.05393](https://arxiv.org/abs/2605.05393) (2026). Free and open source under the [MIT License](LICENSE); please [cite it](#citing-mlm) if MLM helps your work.
 
 ---
 
@@ -178,6 +178,7 @@ dev/                        # notebook generators, benchmarks, the five-layer gr
 docs/                       # tutorial, implementation notes, design, GUI screenshots
 tests/                      # pytest suite
 assets/                     # figures
+LICENSE, CITATION.cff       # MIT license; citation metadata (GitHub "Cite this repository")
 ```
 
 ---
@@ -198,6 +199,32 @@ The notebooks the project started from still work and show the method step by st
 ## Skills demonstrated
 
 Scientific Python (NumPy / SciPy / Polars), JIT compilation (Numba), vectorisation and parallelism (multiprocessing), computational geometry and change-of-basis linear algebra, number theory of commensurate lattices, algorithm design (complexity reduction from $N^4 \to N^2$), computational materials science (DFT / MD input generation, VASP & LAMMPS I/O via ASE), interactive scientific GUIs (ipywidgets, Voilà, py3Dmol), software engineering (tests, CI, typing), and technical writing for peer-reviewed publication.
+
+---
+
+## Citing MLM
+
+If you use MLM in research or teaching, please cite the paper. GitHub's **"Cite this repository"** button (from [`CITATION.cff`](CITATION.cff)) gives the same reference in APA and BibTeX.
+
+```bibtex
+@misc{aditya2026mlmmultilayermoire,
+      title={MLM: Multi-Layer Moire -- A Python Package for Generating Commensurate Supercells of Twisted Multilayer Two-Dimensional Materials},
+      author={Anikeya Aditya and Sampad Mohanty},
+      year={2026},
+      eprint={2605.05393},
+      archivePrefix={arXiv},
+      primaryClass={cond-mat.mtrl-sci},
+      url={https://arxiv.org/abs/2605.05393},
+}
+```
+
+The paper describes the previous version (bilayer and trilayer search); this branch adds N-layer stacks, strain, structure checks, the run index, the CLI and the GUI.
+
+---
+
+## License
+
+MLM is released under the [MIT License](LICENSE): you may use, modify and redistribute it, including in your own projects, as long as the copyright notice is kept. Contributions and forks are welcome.
 
 ---
 
