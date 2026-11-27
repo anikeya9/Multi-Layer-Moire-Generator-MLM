@@ -1,21 +1,17 @@
+"""Small legacy helpers, kept for the notebooks. New code should use MLM.io / MLM.angle_between."""
+
 import numpy as np
+
+from MLM.angle_between import angle_between
+from MLM.io import read_vasp
 
 
 def load_layer_basis(vaspfile):
-    b1 = np.loadtxt(vaspfile, skiprows=2, max_rows=1)[:2]
-    b2 = np.loadtxt(vaspfile, skiprows=3, max_rows=1)[:2]
-    B = np.array([b1, b2]).T
-    return B
+    """2x2 matrix whose columns are the in-plane lattice vectors a, b of a POSCAR."""
+    lattice, _, _ = read_vasp(vaspfile)
+    return np.array([lattice["a"][:2], lattice["b"][:2]]).T
 
 
 def angle_in_degrees(vec1, vec2):
-    v1 = vec1 / np.linalg.norm(vec1)
-    v2 = vec2 / np.linalg.norm(vec2)
-    dot = v1 @ v2
-    dot = np.clip(
-        dot, -1, 1
-    )  # sometimes it goes above 1 or below -1, need to clip for np.acos to work
-    rad = np.acos(dot)
-    return np.degrees(rad)
-
-
+    """Angle between two vectors in degrees (same as MLM.angle_between.angle_between)."""
+    return angle_between(np.asarray(vec1, dtype=float), np.asarray(vec2, dtype=float))

@@ -1,0 +1,18 @@
+# Heterostructure PTO / STO / PTO (lattice mismatch ~0.9 %).
+# Round 1 uses the bilayer notebook's tolerance (dtol 9e-3, Bi-layer_structure_finder.ipynb).
+# The per-step residual stays small, but the trilayer cell is a large multiple of an
+# imperfect bilayer cell, so its true error vs the STO layer grows: filter on
+# max_layer_residual, not only on max_residual.
+name: pto_sto_pto_demo
+output_dir: runs/pto_sto_pto_demo
+layers:
+  - {poscar: moire_structures/PTO_STO/pto_tetra_monolayer.vasp, material: pto}
+  - {poscar: moire_structures/PTO_STO/STO_centered_unit_cell_cubic_monolayer.vasp, material: sto}
+  - {poscar: moire_structures/PTO_STO/pto_tetra_monolayer.vasp, material: pto}
+search:
+  default: {degmin: 28.0, degmax: 30.0, degstep: 0.01, dtol: 9.0e-3, nmin: -10, nmax: 10, goodangles: [90.0]}
+  rounds:
+    2: {degmin: 1.0, degmax: 45.0, dtol: 5.0e-4}
+filters:
+  max_residual: 5.0e-2
+  max_layer_residual: 5.0e-2

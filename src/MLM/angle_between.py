@@ -13,4 +13,6 @@ def angle_between(v1 : np.array,
     Returns:
         float: angle between vectors in degreee
     """
-    return np.rad2deg(np.arccos((np.dot(v1,v2)/(np.linalg.norm(v1)*np.linalg.norm(v2)))))
+    cos = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    cos = np.clip(cos, -1.0, 1.0)          # guard arccos against float overshoot
+    return float(np.rad2deg(np.arccos(cos)))

@@ -1,3 +1,3 @@
-# src/my_package/__init__.py
-__version__ = "0.1"
+"""MLM — Multi-Layer Moiré: commensurate supercells of twisted multilayer 2D materials."""
 
+__version__ = "0.2.0"

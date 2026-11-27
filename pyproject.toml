@@ -1,0 +1,57 @@
+# Minimal build configuration. The package metadata itself lives in setup.py;
+# this file only tells pip which build backend to use, so that
+# `pip install -e .` works with an up-to-date setuptools in an isolated build.
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: long-running reproduction checks (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    # ASE (3.29) still sets array.shape, deprecated in NumPy 2.5; not our code.
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
+    # spglib 2.x announces a future change of its error handling.
+    "ignore:Set OLD_ERROR_HANDLING:DeprecationWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Code quality tools (run: `ruff check .`, `mypy`, or all at once: `pre-commit run -a`)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# Apply the excludes below even to files passed explicitly (pre-commit passes file names);
+# without this, `ruff check --fix` in the hook would rewrite match.py.
+force-exclude = true
+# The original modules are kept as they are (match.py must not change).
+extend-exclude = [
+    "src/MLM/match.py",
+    "src/MLM/moire_lattice_vector_finder.py",
+    "src/MLM/structure_writer.py",
+    "src/MLM/angle_between.py",
+    "notebooks",
+    "dev/*.ipynb",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E741",  # 'l' as a name is fine in short math helpers
+    "B905",  # zip() without strict= : lengths are validated explicitly where it matters
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # imports after pytest.importorskip
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/MLM"]
+# The original modules are not type-annotated; they are kept as they are.
+exclude = ["src/MLM/match\\.py", "src/MLM/moire_lattice_vector_finder\\.py", "src/MLM/structure_writer\\.py",
+           "src/MLM/angle_between\\.py"]
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true

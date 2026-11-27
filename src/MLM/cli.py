@@ -1,0 +1,160 @@
+"""Command-line interface: ``python -m MLM <command> ...``.
+
+Commands
+--------
+``run``    run a stack spec              ``python -m MLM run examples/bto_trilayer_demo.yaml``
+``find``   query a run's index table     ``python -m MLM find runs/bto_trilayer_demo --n-layers 3``
+``show``   print a recipe and lineage    ``python -m MLM show runs/bto_trilayer_demo <id>``
+``write``  rebuild atoms, write a file   ``python -m MLM write runs/bto_trilayer_demo <id> --fmt lammps``
+``check``  sanity checks of a structure ``python -m MLM check runs/bto_trilayer_demo <id>``
+``gui``    graphical interface (Voilà)  ``python -m MLM gui``
+
+Every command is a thin wrapper around the Python API (``MLM.spec``, ``MLM.index``,
+``MLM.build``); see ``docs/IMPLEMENTATION_NOTES.md``.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Optional, Sequence
+
+import pandas as pd
+
+from MLM.build import FORMATS, _build_from_run, check_structure, default_out, default_search_dirs, write_built
+from MLM.checks import check_built
+from MLM.index import find, get, lineage
+from MLM.spec import run_stack_spec
+
+#: Columns printed by ``find`` (the full table is in index.csv).
+FIND_COLUMNS = ["id", "n_layers", "n_atoms", "twists", "angle_between_vectors", "residual",
+                "cumulative_residual", "max_layer_residual", "max_strain", "cell_area", "passed_filter"]
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    result = run_stack_spec(args.spec, base_dir=args.base_dir, dry_run=args.dry_run,
+                            log=None if args.quiet else print, workers=args.workers, resume=args.resume,
+                            index_format=args.index_format)
+    if not args.dry_run:
+        print()
+        print(result.summary())
+    return 0
+
+
+def _cmd_find(args: argparse.Namespace) -> int:
+    material = args.material
+    if material is not None and "," in material:
+        material = material.split(",")  # exact stacking order, e.g. pto,sto
+    passed = {None: None, "yes": True, "no": False}[args.passed]
+    table = find(args.run_dir, n_layers=args.n_layers, max_cumulative_residual=args.max_cumulative_residual,
+                 angle_between_vectors=args.angle, material=material, passed_filter=passed,
+                 max_cell_area=args.max_cell_area, max_strain=args.max_strain, max_atoms=args.max_atoms)
+    if args.sort:
+        table = table.sort_values(args.sort, ascending=not args.descending, na_position="last", kind="stable")
+    with pd.option_context("display.max_rows", args.limit, "display.width", 200, "display.max_columns", 20):
+        print(table[FIND_COLUMNS].head(args.limit).to_string(index=False))
+    print(f"\n{len(table)} matching structure(s)")
+    return 0
+
+
+def _cmd_show(args: argparse.Namespace) -> int:
+    record = get(args.run_dir, args.id)
+    import yaml
+
+    print(yaml.safe_dump(record.to_dict(), sort_keys=False, default_flow_style=None))
+    print("lineage:")
+    print(lineage(args.run_dir, args.id).format(indent="  "))
+    return 0
+
+
+def _cmd_write(args: argparse.Namespace) -> int:
+    # Build once, check (without the space group: spglib takes minutes on large cells), write.
+    search_dirs = default_search_dirs(args.run_dir)
+    built = _build_from_run(args.run_dir, args.id, args.gap, args.vacuum, search_dirs, None, None)
+    report = check_built(built, search_dirs=search_dirs, symmetry=False)
+    out = args.out if args.out is not None else default_out(args.run_dir, args.id, args.fmt)
+    path = write_built(built, args.fmt, out)
+    print(path)
+    print(report)
+    return 0
+
+
+def _cmd_gui(args: argparse.Namespace) -> int:
+    from MLM.gui import launch
+
+    return launch(port=args.port, open_browser=not args.no_browser)
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    report = check_structure(args.run_dir, args.id, interlayer_gap=args.gap, vacuum=args.vacuum)
+    print(report)
+    return 0 if report.ok else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The argparse parser (separate function so tests can inspect it)."""
+    parser = argparse.ArgumentParser(prog="python -m MLM", description="Multi-layer moiré search and structure tools.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    run = commands.add_parser("run", help="run a stack spec (YAML job file)")
+    run.add_argument("spec", type=Path)
+    run.add_argument("--base-dir", type=Path, default=None,
+                     help="directory relative paths in the spec start from (default: cwd)")
+    run.add_argument("--dry-run", action="store_true", help="show the planned work without searching")
+    run.add_argument("--quiet", action="store_true", help="no progress messages")
+    run.add_argument("--workers", type=int, default=1,
+                     help="parallel processes for the searches of a step (0 = all cores)")
+    run.add_argument("--resume", action="store_true", help="continue an interrupted run in the same output_dir")
+    run.add_argument("--index-format", choices=["csv", "sqlite"], default="csv",
+                     help="index file format (sqlite for very large runs)")
+    run.set_defaults(handler=_cmd_run)
+
+    query = commands.add_parser("find", help="filter a run's index.csv")
+    query.add_argument("run_dir", type=Path)
+    query.add_argument("--n-layers", type=int)
+    query.add_argument("--max-cumulative-residual", type=float)
+    query.add_argument("--angle", type=float, help="angle between the cell vectors (deg)")
+    query.add_argument("--material", help="'bto' = only bto; 'pto,sto' = exact stacking order")
+    query.add_argument("--passed", choices=["yes", "no"], help="only candidates that passed / failed the filters")
+    query.add_argument("--max-cell-area", type=float)
+    query.add_argument("--max-atoms", type=int, help="atoms in the cell")
+    query.add_argument("--sort", choices=["n_atoms", "cell_area", "residual", "cumulative_residual",
+                                          "max_layer_residual", "max_strain", "twist", "id"],
+                       help="sort by this column (default: cumulative_residual)")
+    query.add_argument("--descending", action="store_true", help="with --sort: largest first")
+    query.add_argument("--max-strain", type=float, help="largest principal strain of any layer, in percent")
+    query.add_argument("--limit", type=int, default=50, help="max rows to print (default 50)")
+    query.set_defaults(handler=_cmd_find)
+
+    show = commands.add_parser("show", help="print one recipe and its lineage")
+    show.add_argument("run_dir", type=Path)
+    show.add_argument("id")
+    show.set_defaults(handler=_cmd_show)
+
+    write = commands.add_parser("write", help="rebuild atoms of one structure and write VASP/LAMMPS")
+    write.add_argument("run_dir", type=Path)
+    write.add_argument("id")
+    write.add_argument("--fmt", choices=sorted(FORMATS), default="vasp")
+    write.add_argument("--out", type=Path, default=None)
+    write.add_argument("--gap", type=float, default=3.0, help="interlayer gap in Å (default 3)")
+    write.add_argument("--vacuum", type=float, default=50.0, help="vacuum along c in Å (default 50)")
+    write.set_defaults(handler=_cmd_write)
+
+    check = commands.add_parser("check", help="rebuild one structure and run the sanity checks")
+    check.add_argument("run_dir", type=Path)
+    check.add_argument("id")
+    check.add_argument("--gap", type=float, default=3.0, help="interlayer gap in Å (default 3)")
+    check.add_argument("--vacuum", type=float, default=50.0, help="vacuum along c in Å (default 50)")
+    check.set_defaults(handler=_cmd_check)
+
+    gui = commands.add_parser("gui", help="open the graphical interface in the browser (Voilà)")
+    gui.add_argument("--port", type=int, default=None)
+    gui.add_argument("--no-browser", action="store_true", help="only start the server")
+    gui.set_defaults(handler=_cmd_gui)
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Entry point of ``python -m MLM``; returns the exit code."""
+    args = build_parser().parse_args(argv)
+    return args.handler(args)
