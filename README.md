@@ -73,7 +73,6 @@ A perovskite-oxide heterobilayer with mismatched lattice constants. MLM reports 
 ```bash
 git clone https://github.com/anikeya9/Multi-Layer-Moire-Generator-MLM.git
 cd Multi-Layer-Moire-Generator-MLM
-git checkout quality-improvements
 pip install -e ".[all]"          # package + GUI + checks + notebooks + dev tools
 ```
 
@@ -132,7 +131,7 @@ Step-by-step tutorial: [`docs/TUTORIAL.md`](docs/TUTORIAL.md).
 
 ---
 
-## What's in the `quality-improvements` branch
+## What's new in v0.2.0
 
 **Search**
 - N-layer stacks as a tournament tree, a twist window per interface, dry run with time estimates.
