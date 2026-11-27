@@ -414,7 +414,7 @@ Larger budgets (the run behind these files; see `docs/IMPLEMENTATION_NOTES.md` Â
 ```bash
 python dev/graphene_5layer_deep_search.py --quick                       # 1000 atoms, ~20 s
 python dev/graphene_5layer_deep_search.py --max-atoms 80000 --round1-start 1000 \
-       --run-dir runs/graphene_5layer_80k --write-top 200                # 359 666 stacks, 1.4 h, 10 GB
+       --run-dir runs/graphene_5layer_80k --write-top 200                # â‰¥ 359 666 stacks, 1.4 h, 10 GB
 python dev/graphene_5layer_deep_search.py --run-dir runs/graphene_5layer_80k --write-below 1000
 ```
 

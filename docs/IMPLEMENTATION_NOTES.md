@@ -533,8 +533,14 @@ twists bottom to top, residual and strain in aligned columns; the shipped exampl
 | 1 000 | 28 | 382 | 111 | 25 s (4 processes) | — |
 | 10 000 | 274 | 14 182 | 3 891 | 58 s | 0.4 GB |
 | 20 000 | 554 | 50 222 | 13 908 | 4 min | 0.9 GB |
-| 40 000 | 1 098 | 138 182 | 39 178 | 15 min | 2.7 GB |
-| 80 000 | 2 206 | 359 666 | 105 292 | 1.4 h | 10.2 GB |
+| 40 000 | 1 098 | 143 358 | 39 288 | 15 min | 2.7 GB |
+| 80 000 | 2 206 | ≥ 359 666 | ≥ 105 292 | 1.4 h | 10.2 GB |
+
+The script's stop rule ends some searches before they cover the budget (404, 886 and 2 936
+of 0.3, 1.2 and 4.9 million searches at 20 000, 40 000 and 80 000 atoms). At 20 000 atoms
+this loses nothing. At 40 000 it loses 5 176 stacks, all of 23 000–40 000 atoms: it finds
+138 182 (39 178 distinct). The row shows the complete count, from a re-run with the
+corrected search of the next version. The 80 000 counts are lower bounds.
 
 Time, memory and disk grow ~4× per doubling of the budget; 1 million atoms would need about
 1.7 TB of memory as written (every candidate is held in memory) — streaming candidates to the

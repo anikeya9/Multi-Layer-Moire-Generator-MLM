@@ -32,10 +32,10 @@ The same search (`dev/graphene_5layer_deep_search.py`: exact commensurate twists
 |---|---|---|---|---|
 | 1 000 | 28 | 382 | 111 | 25 s |
 | 10 000 | 274 | 14 182 | 3 891 | 1 min |
-| 40 000 | 1 098 | 138 182 | 39 178 | 15 min |
-| 80 000 | 2 206 | 359 666 | 105 292 | 1.4 h |
+| 40 000 | 1 098 | 143 358 | 39 288 | 15 min |
+| 80 000 | 2 206 | ≥ 359 666 | ≥ 105 292 | 1.4 h |
 
-(18 processes on a 20-thread workstation; the 1000-atom run used 4.)
+(18 processes on a 20-thread workstation; the 1000-atom run used 4.) Up to 20 000 atoms the script finds every stack. Above that its stop rule ends a few searches too early: at 40 000 atoms it finds 138 182 of the 143 358 stacks (the full count comes from the next version's search), and the 80 000-atom counts are lower bounds. The next version fixes this.
 
 Browse them in the GUI (**Results** tab → `examples/graphene_5layer`, sort by atoms, filter by twists) or from the command line:
 
